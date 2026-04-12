@@ -445,20 +445,20 @@ def detect_danger_zones(
 ) -> tuple[DangerFlags, np.ndarray, list[np.ndarray]]:
     h, w = frame.shape[:2]
     raw_mask = build_danger_mask(frame)
-    contours, _ = cv.findContours(raw_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
 
     flags = DangerFlags()
     filtered_mask = np.zeros_like(raw_mask)
-    kept_contours: list[np.ndarray] = []
     zone_w = max(1, w // 3)
 
-    for cnt in contours:
-        area = cv.contourArea(cnt)
+    # Keep only sufficiently large connected red regions while preserving holes.
+    num_labels, labels, stats, _ = cv.connectedComponentsWithStats(raw_mask, connectivity=8)
+    for label in range(1, num_labels):
+        area = int(stats[label, cv.CC_STAT_AREA])
         if area < settings.min_obstacle_area:
             continue
+        filtered_mask[labels == label] = 255
 
-        kept_contours.append(cnt)
-        cv.drawContours(filtered_mask, [cnt], -1, 255, thickness=cv.FILLED)
+    kept_contours, _ = cv.findContours(filtered_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
 
     ys, xs = np.where(filtered_mask > 0)
     if xs.size == 0:
