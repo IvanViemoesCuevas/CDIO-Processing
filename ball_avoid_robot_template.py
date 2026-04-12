@@ -45,6 +45,8 @@ class RobotPose:
 
 @dataclass
 class DangerFlags:
+    front: bool = False
+    back: bool = False
     left: bool = False
     center: bool = False
     right: bool = False
@@ -78,17 +80,17 @@ class Settings:
     obstacle_roi_start_ratio: float = 0.52
     min_obstacle_area: int = 800
     danger_center_deadband_px: int = 60
-    danger_distance_px: float = 360.0
-    danger_too_close_px: float = 130.0
-    danger_rear_ignore_px: float = 80.0
+    danger_distance_px: float = 35.0
+    danger_too_close_px: float = 35.0
+    danger_rear_ignore_px: float = 45.0
     aruco_dictionary: int = cv.aruco.DICT_4X4_100
     robot_marker_id: int = 7
     use_robot_pose: bool = True
     pose_turn_deadband_deg: float = 12.0
     pose_arrival_distance_px: float = 70.0
     white_sat_split: float = 80.0
-    robot_footprint_length_px: float = 600.0
-    robot_footprint_width_px: float = 250.0
+    robot_footprint_length_px: float = 70.0
+    robot_footprint_width_px: float = 70.0
 
 
 @dataclass
@@ -493,12 +495,12 @@ def detect_danger_zones(
         forward_body = dx_img * heading_x + dy_img * heading_y
         right_body = dx_img * right_x + dy_img * right_y
 
-        near = (dist2 <= float(settings.danger_distance_px * settings.danger_distance_px)) & (
-            forward_body >= -float(settings.danger_rear_ignore_px)
-        )
+        near = dist2 <= float(settings.danger_distance_px * settings.danger_distance_px)
         if np.any(near):
             forward_near = forward_body[near]
             right_near = right_body[near]
+            flags.front = bool(np.any(forward_near > float(settings.danger_center_deadband_px)))
+            flags.back = bool(np.any(forward_near < -float(settings.danger_center_deadband_px)))
             flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_px)))
             flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_px)))
             flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_px)))
@@ -510,6 +512,9 @@ def detect_danger_zones(
             and state.nearest_dy_body >= -float(settings.danger_rear_ignore_px)
         )
     else:
+        zone_h = max(1, h // 3)
+        flags.front = bool(np.any(ys < zone_h))
+        flags.back = bool(np.any(ys >= zone_h * 2))
         flags.left = bool(np.any(xs < zone_w))
         flags.center = bool(np.any((xs >= zone_w) & (xs < zone_w * 2)))
         flags.right = bool(np.any(xs >= zone_w * 2))
@@ -529,12 +534,16 @@ def decide_command(
     if danger_state is not None and danger_state.too_close:
         if abs(danger_state.nearest_dx_body) <= float(settings.danger_center_deadband_px):
             return CMD_STOP, f"danger:too_close d={danger_state.nearest_distance_px:.0f}"
+        if danger_state.nearest_dy_body < -float(settings.danger_rear_ignore_px):
+            return CMD_FORWARD, f"danger:avoid_back d={danger_state.nearest_distance_px:.0f}"
         if danger_state.nearest_dx_body < 0.0:
             return CMD_RIGHT, f"danger:avoid_left d={danger_state.nearest_distance_px:.0f}"
         return CMD_LEFT, f"danger:avoid_right d={danger_state.nearest_distance_px:.0f}"
 
-    if danger.center:
-        return CMD_STOP, "danger:center"
+    if danger.front and danger.center:
+        return CMD_STOP, "danger:front"
+    if danger.back and not danger.front and not danger.left and not danger.right:
+        return CMD_FORWARD, "danger:back"
     if danger.left and not danger.right:
         return CMD_RIGHT, "danger:left"
     if danger.right and not danger.left:
@@ -607,7 +616,12 @@ def annotate(
     if danger_contours:
         cv.drawContours(out, danger_contours, -1, (255, 0, 255), 2)
 
-    if robot_pose is not None and danger_state is not None and danger_state.nearest_point is not None:
+    if (
+        robot_pose is not None
+        and danger_state is not None
+        and danger_state.nearest_point is not None
+        and danger_state.too_close
+    ):
         px, py = danger_state.nearest_point
         cv.circle(out, (px, py), 5, (255, 0, 255), -1)
         cv.line(out, (robot_pose.x, robot_pose.y), (px, py), (255, 0, 255), 2)
@@ -656,12 +670,14 @@ def annotate(
         cv.arrowedLine(out, (robot_pose.x, robot_pose.y), (x2, y2), (0, 255, 0), 2, tipLength=0.25)
         cv.putText(out, "robot", (robot_pose.x + 10, robot_pose.y - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-    if danger.left:
-        cv.putText(out, "DANGER L", (10, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
-    if danger.center:
-        cv.putText(out, "DANGER C", (w // 2 - 65, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
-    if danger.right:
-        cv.putText(out, "DANGER R", (w - 145, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
+#    if danger.front:
+#        cv.putText(out, "DANGER FRONT", (w // 2 - 95, 28), cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
+#    if danger.back:
+#        cv.putText(out, "DANGER BACK", (w // 2 - 88, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
+#    if danger.left:
+#        cv.putText(out, "DANGER LEFT", (10, h // 2), cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
+#    if danger.right:
+#        cv.putText(out, "DANGER RIGHT", (w - 180, h // 2), cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
 
     cv.putText(out, f"cmd={command} reason={reason}", (10, 56), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     cv.putText(out, f"last_sent={last_sent}", (10, 84), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
