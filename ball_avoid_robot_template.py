@@ -68,12 +68,16 @@ class Settings:
     target_radius_px: float = 38.0
     obstacle_roi_start_ratio: float = 0.52
     min_obstacle_area: int = 800
-    aruco_dictionary: int = cv.aruco.DICT_4X4_50
-    robot_marker_id: int = -1
+    danger_center_deadband_px: int = 60
+    danger_distance_px: float = 360.0
+    aruco_dictionary: int = cv.aruco.DICT_4X4_100
+    robot_marker_id: int = 7
     use_robot_pose: bool = True
     pose_turn_deadband_deg: float = 12.0
     pose_arrival_distance_px: float = 70.0
     white_sat_split: float = 80.0
+    robot_footprint_length_px: float = 600.0
+    robot_footprint_width_px: float = 250.0
 
 
 @dataclass
@@ -139,6 +143,9 @@ class RobotClient:
 ORANGE_RANGE = HSVRange((0, 100, 210), (51, 255, 255))
 # White ping pong balls under indoor light are often slightly yellow with darker edges.
 WHITE_RANGE = HSVRange((19, 0, 0), (179, 99, 255))
+# Barrier color is red (camera sees red tops).
+RED_RANGE_1 = HSVRange((0, 95, 60), (10, 255, 255))
+RED_RANGE_2 = HSVRange((165, 95, 60), (179, 255, 255))
 
 
 class HSVLiveTuner:
@@ -388,7 +395,7 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
     dictionary = cv.aruco.getPredefinedDictionary(settings.aruco_dictionary)
     detector_params = cv.aruco.DetectorParameters()
     detector = cv.aruco.ArucoDetector(dictionary, detector_params)
-    corners, ids, _ = detector.detectMarkers(frame)
+    corners, ids, rejected = detector.detectMarkers(frame)
     if ids is None or len(ids) == 0:
         return None
 
@@ -411,19 +418,38 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
     return RobotPose(x=cx, y=cy, heading_rad=heading, confidence=1.0)
 
 
-def detect_danger_zones(frame: np.ndarray, settings: Settings) -> tuple[DangerFlags, np.ndarray]:
+def draw_robot_footprint(frame: np.ndarray, robot_pose: RobotPose, length_px: float, width_px: float) -> None:
+    length = max(10.0, float(length_px))
+    width = max(10.0, float(width_px))
+    angle_deg = math.degrees(robot_pose.heading_rad)
+    rect = ((float(robot_pose.x), float(robot_pose.y)), (length, width), angle_deg)
+    box = cv.boxPoints(rect).astype(np.int32)
+    cv.polylines(frame, [box], True, (0, 255, 255), 2)
+
+
+def build_danger_mask(frame: np.ndarray) -> np.ndarray:
+    hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+    red1 = cv.inRange(hsv, RED_RANGE_1.lower, RED_RANGE_1.upper)
+    red2 = cv.inRange(hsv, RED_RANGE_2.lower, RED_RANGE_2.upper)
+    mask = cv.bitwise_or(red1, red2)
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)
+    mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
+    return mask
+
+
+def detect_danger_zones(
+    frame: np.ndarray,
+    settings: Settings,
+    robot_pose: Optional[RobotPose],
+) -> tuple[DangerFlags, np.ndarray, list[np.ndarray]]:
     h, w = frame.shape[:2]
-    y0 = int(h * settings.obstacle_roi_start_ratio)
-    roi = frame[y0:h, :]
-
-    gray = cv.cvtColor(roi, cv.COLOR_BGR2GRAY)
-    blur = cv.GaussianBlur(gray, (5, 5), 0)
-    edges = cv.Canny(blur, 60, 140)
-    edges = cv.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
-
-    contours, _ = cv.findContours(edges, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    raw_mask = build_danger_mask(frame)
+    contours, _ = cv.findContours(raw_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
 
     flags = DangerFlags()
+    filtered_mask = np.zeros_like(raw_mask)
+    kept_contours: list[np.ndarray] = []
     zone_w = max(1, w // 3)
 
     for cnt in contours:
@@ -431,19 +457,28 @@ def detect_danger_zones(frame: np.ndarray, settings: Settings) -> tuple[DangerFl
         if area < settings.min_obstacle_area:
             continue
 
-        x, y, cw, ch = cv.boundingRect(cnt)
-        if ch < 18 or cw < 18:
-            continue
+        kept_contours.append(cnt)
+        cv.drawContours(filtered_mask, [cnt], -1, 255, thickness=cv.FILLED)
 
-        cx = x + cw // 2
-        if cx < zone_w:
-            flags.left = True
-        elif cx < zone_w * 2:
-            flags.center = True
-        else:
-            flags.right = True
+    ys, xs = np.where(filtered_mask > 0)
+    if xs.size == 0:
+        return flags, filtered_mask, kept_contours
 
-    return flags, edges
+    if robot_pose is not None:
+        dx = xs.astype(np.float32) - float(robot_pose.x)
+        dy = ys.astype(np.float32) - float(robot_pose.y)
+        near = (dx * dx + dy * dy) <= float(settings.danger_distance_px * settings.danger_distance_px)
+        if np.any(near):
+            dx_near = dx[near]
+            flags.center = bool(np.any(np.abs(dx_near) <= float(settings.danger_center_deadband_px)))
+            flags.left = bool(np.any(dx_near < -float(settings.danger_center_deadband_px)))
+            flags.right = bool(np.any(dx_near > float(settings.danger_center_deadband_px)))
+    else:
+        flags.left = bool(np.any(xs < zone_w))
+        flags.center = bool(np.any((xs >= zone_w) & (xs < zone_w * 2)))
+        flags.right = bool(np.any(xs >= zone_w * 2))
+
+    return flags, filtered_mask, kept_contours
 
 
 def decide_command(
@@ -505,6 +540,10 @@ def annotate(
     balls: list[BallDetection],
     ball: Optional[BallDetection],
     robot_pose: Optional[RobotPose],
+    robot_footprint_length_px: float,
+    robot_footprint_width_px: float,
+    danger_mask: np.ndarray,
+    danger_contours: list[np.ndarray],
     danger: DangerFlags,
     command: str,
     reason: str,
@@ -515,6 +554,13 @@ def annotate(
 
     cv.line(out, (w // 3, 0), (w // 3, h), (100, 100, 100), 1)
     cv.line(out, (2 * w // 3, 0), (2 * w // 3, h), (100, 100, 100), 1)
+
+    if danger_mask.size > 0:
+        overlay = out.copy()
+        overlay[danger_mask > 0] = (255, 0, 255)
+        out = cv.addWeighted(overlay, 0.22, out, 0.78, 0.0)
+    if danger_contours:
+        cv.drawContours(out, danger_contours, -1, (255, 0, 255), 2)
 
     for candidate in balls:
         ghost_color = (225, 225, 225) if candidate.color_name == "white" else (80, 120, 255)
@@ -543,6 +589,7 @@ def annotate(
         )
 
     if robot_pose is not None:
+        draw_robot_footprint(out, robot_pose, robot_footprint_length_px, robot_footprint_width_px)
         cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
         arrow_len = 45
         x2 = int(robot_pose.x + arrow_len * math.cos(robot_pose.heading_rad))
@@ -551,14 +598,26 @@ def annotate(
         cv.putText(out, "robot", (robot_pose.x + 10, robot_pose.y - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     if danger.left:
-        cv.putText(out, "DANGER L", (10, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv.putText(out, "DANGER L", (10, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
     if danger.center:
-        cv.putText(out, "DANGER C", (w // 2 - 65, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv.putText(out, "DANGER C", (w // 2 - 65, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
     if danger.right:
-        cv.putText(out, "DANGER R", (w - 145, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv.putText(out, "DANGER R", (w - 145, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
 
     cv.putText(out, f"cmd={command} reason={reason}", (10, 56), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     cv.putText(out, f"last_sent={last_sent}", (10, 84), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+    cv.putText(
+        out,
+        (
+            f"robot_box LxW={int(robot_footprint_length_px)}x{int(robot_footprint_width_px)}px "
+            f"([ ]=length ; '=width)"
+        ),
+        (10, 112),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (0, 255, 255),
+        2,
+    )
     return out
 
 
@@ -579,6 +638,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--no-robot-pose", action="store_true", help="Disable ArUco-based robot pose estimation")
     parser.add_argument("--robot-marker-id", type=int, default=-1, help="Aruco marker id on robot (-1 = first visible)")
+    parser.add_argument(
+        "--robot-footprint-length-px",
+        type=float,
+        default=Settings().robot_footprint_length_px,
+        help="Robot footprint length in pixels for visualization",
+    )
+    parser.add_argument(
+        "--robot-footprint-width-px",
+        type=float,
+        default=Settings().robot_footprint_width_px,
+        help="Robot footprint width in pixels for visualization",
+    )
     return parser.parse_args()
 
 
@@ -591,6 +662,8 @@ def main() -> int:
         min_ball_confidence=max(0.0, min(1.0, args.min_ball_confidence)),
         use_robot_pose=not args.no_robot_pose,
         robot_marker_id=args.robot_marker_id,
+        robot_footprint_length_px=max(10.0, float(args.robot_footprint_length_px)),
+        robot_footprint_width_px=max(10.0, float(args.robot_footprint_width_px)),
     )
 
     cap = cv.VideoCapture(settings.camera_index)
@@ -625,18 +698,18 @@ def main() -> int:
                 tuning = tuner.read()
 
             robot_pose = detect_robot_pose(frame, settings)
-            balls = detect_balls(
-                frame,
-                settings,
-                orange_range=tuning.orange_range,
-                white_range=tuning.white_range,
-                white_sat_split=tuning.white_sat_split,
-            )
-            ball = choose_target_ball(balls, robot_pose)
-            danger, edges = detect_danger_zones(frame, settings)
+#            balls = detect_balls(
+#                frame,
+#                settings,
+#                orange_range=tuning.orange_range,
+#                white_range=tuning.white_range,
+#                white_sat_split=tuning.white_sat_split,
+#            )
+#            ball = choose_target_ball(balls, robot_pose)
+            danger, edges, danger_contours = detect_danger_zones(frame, settings, robot_pose)
             command, reason = decide_command(
                 frame.shape[1],
-                ball,
+                None, #ball
                 danger,
                 settings,
                 robot_pose=robot_pose,
@@ -663,7 +736,21 @@ def main() -> int:
                 last_sent_command = candidate_command
                 last_send_time = now
 
-            display = annotate(frame, balls, ball, robot_pose, danger, command, reason, last_sent_command)
+            #display = annotate(frame, balls, ball, robot_pose, settings.robot_footprint_length_px, settings.robot_footprint_width_px, danger, command, reason, last_sent_command)
+            display = annotate(
+                frame,
+                [],
+                None,
+                robot_pose,
+                settings.robot_footprint_length_px,
+                settings.robot_footprint_width_px,
+                edges,
+                danger_contours,
+                danger,
+                command,
+                reason,
+                last_sent_command,
+            )
             cv.imshow("Ball Avoid Robot Template", display)
             if args.show_edges:
                 cv.imshow("Obstacle Edges", edges)
@@ -678,7 +765,16 @@ def main() -> int:
                     ),
                 )
 
-            if cv.waitKey(1) & 0xFF == ord("q"):
+            key = cv.waitKey(1) & 0xFF
+            if key == ord("["):
+                settings.robot_footprint_length_px = max(10.0, settings.robot_footprint_length_px - 2.0)
+            elif key == ord("]"):
+                settings.robot_footprint_length_px += 2.0
+            elif key == ord(";"):
+                settings.robot_footprint_width_px = max(10.0, settings.robot_footprint_width_px - 2.0)
+            elif key == ord("'"):
+                settings.robot_footprint_width_px += 2.0
+            elif key == ord("q"):
                 if client is not None:
                     client.send_char(CMD_QUIT)
                 break
