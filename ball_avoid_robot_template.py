@@ -51,6 +51,15 @@ class DangerFlags:
 
 
 @dataclass
+class DangerState:
+    nearest_distance_px: float = float("inf")
+    nearest_point: Optional[tuple[int, int]] = None
+    nearest_dx_body: float = 0.0
+    nearest_dy_body: float = 0.0
+    too_close: bool = False
+
+
+@dataclass
 class Settings:
     host: str = "172.20.10.2"
     port: int = 12345
@@ -60,16 +69,18 @@ class Settings:
     reconnect_delay_sec: float = 1.0
     min_ball_area: int = 140
     max_ball_area: int = 8000
-    min_ball_circularity: float = 0.5
-    min_ball_radius: float = 20.0
-    max_ball_radius: float = 70.0
-    min_ball_confidence: float = 0.65
+    min_ball_circularity: float = 0.65
+    min_ball_radius: float = 10.0
+    max_ball_radius: float = 20.0
+    min_ball_confidence: float = 0.5
     align_deadband_px: int = 35
     target_radius_px: float = 38.0
     obstacle_roi_start_ratio: float = 0.52
     min_obstacle_area: int = 800
     danger_center_deadband_px: int = 60
     danger_distance_px: float = 360.0
+    danger_too_close_px: float = 130.0
+    danger_rear_ignore_px: float = 80.0
     aruco_dictionary: int = cv.aruco.DICT_4X4_100
     robot_marker_id: int = 7
     use_robot_pose: bool = True
@@ -140,9 +151,9 @@ class RobotClient:
 
 # (Hue, Saturation, brightness)
 # Orange ping pong balls can look darker/less saturated at distance or in shadow.
-ORANGE_RANGE = HSVRange((0, 100, 210), (51, 255, 255))
+ORANGE_RANGE = HSVRange((11, 100, 210), (19, 255, 255))
 # White ping pong balls under indoor light are often slightly yellow with darker edges.
-WHITE_RANGE = HSVRange((19, 0, 0), (179, 99, 255))
+WHITE_RANGE = HSVRange((0, 0, 189), (179, 95, 255))
 # Barrier color is red (camera sees red tops).
 RED_RANGE_1 = HSVRange((0, 95, 60), (10, 255, 255))
 RED_RANGE_2 = HSVRange((165, 95, 60), (179, 255, 255))
@@ -442,7 +453,7 @@ def detect_danger_zones(
     frame: np.ndarray,
     settings: Settings,
     robot_pose: Optional[RobotPose],
-) -> tuple[DangerFlags, np.ndarray, list[np.ndarray]]:
+) -> tuple[DangerFlags, DangerState, np.ndarray, list[np.ndarray]]:
     h, w = frame.shape[:2]
     raw_mask = build_danger_mask(frame)
 
@@ -461,24 +472,49 @@ def detect_danger_zones(
     kept_contours, _ = cv.findContours(filtered_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
 
     ys, xs = np.where(filtered_mask > 0)
+    state = DangerState()
     if xs.size == 0:
-        return flags, filtered_mask, kept_contours
+        return flags, state, filtered_mask, kept_contours
 
     if robot_pose is not None:
-        dx = xs.astype(np.float32) - float(robot_pose.x)
-        dy = ys.astype(np.float32) - float(robot_pose.y)
-        near = (dx * dx + dy * dy) <= float(settings.danger_distance_px * settings.danger_distance_px)
+        dx_img = xs.astype(np.float32) - float(robot_pose.x)
+        dy_img = ys.astype(np.float32) - float(robot_pose.y)
+        dist2 = dx_img * dx_img + dy_img * dy_img
+        nearest_index = int(np.argmin(dist2))
+
+        state.nearest_distance_px = float(np.sqrt(dist2[nearest_index]))
+        state.nearest_point = (int(xs[nearest_index]), int(ys[nearest_index]))
+
+        heading_x = math.cos(robot_pose.heading_rad)
+        heading_y = math.sin(robot_pose.heading_rad)
+        right_x = -heading_y
+        right_y = heading_x
+
+        forward_body = dx_img * heading_x + dy_img * heading_y
+        right_body = dx_img * right_x + dy_img * right_y
+
+        near = (dist2 <= float(settings.danger_distance_px * settings.danger_distance_px)) & (
+            forward_body >= -float(settings.danger_rear_ignore_px)
+        )
         if np.any(near):
-            dx_near = dx[near]
-            flags.center = bool(np.any(np.abs(dx_near) <= float(settings.danger_center_deadband_px)))
-            flags.left = bool(np.any(dx_near < -float(settings.danger_center_deadband_px)))
-            flags.right = bool(np.any(dx_near > float(settings.danger_center_deadband_px)))
+            forward_near = forward_body[near]
+            right_near = right_body[near]
+            flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_px)))
+            flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_px)))
+            flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_px)))
+
+        state.nearest_dx_body = float(right_body[nearest_index])
+        state.nearest_dy_body = float(forward_body[nearest_index])
+        state.too_close = (
+            state.nearest_distance_px <= float(settings.danger_too_close_px)
+            and state.nearest_dy_body >= -float(settings.danger_rear_ignore_px)
+        )
     else:
         flags.left = bool(np.any(xs < zone_w))
         flags.center = bool(np.any((xs >= zone_w) & (xs < zone_w * 2)))
         flags.right = bool(np.any(xs >= zone_w * 2))
 
-    return flags, filtered_mask, kept_contours
+    return flags, state, filtered_mask, kept_contours
 
 
 def decide_command(
@@ -488,7 +524,15 @@ def decide_command(
     settings: Settings,
     robot_pose: Optional[RobotPose] = None,
     frame_height: Optional[int] = None,
+    danger_state: Optional[DangerState] = None,
 ) -> tuple[str, str]:
+    if danger_state is not None and danger_state.too_close:
+        if abs(danger_state.nearest_dx_body) <= float(settings.danger_center_deadband_px):
+            return CMD_STOP, f"danger:too_close d={danger_state.nearest_distance_px:.0f}"
+        if danger_state.nearest_dx_body < 0.0:
+            return CMD_RIGHT, f"danger:avoid_left d={danger_state.nearest_distance_px:.0f}"
+        return CMD_LEFT, f"danger:avoid_right d={danger_state.nearest_distance_px:.0f}"
+
     if danger.center:
         return CMD_STOP, "danger:center"
     if danger.left and not danger.right:
@@ -545,6 +589,7 @@ def annotate(
     danger_mask: np.ndarray,
     danger_contours: list[np.ndarray],
     danger: DangerFlags,
+    danger_state: Optional[DangerState],
     command: str,
     reason: str,
     last_sent: Optional[str],
@@ -561,6 +606,20 @@ def annotate(
         out = cv.addWeighted(overlay, 0.22, out, 0.78, 0.0)
     if danger_contours:
         cv.drawContours(out, danger_contours, -1, (255, 0, 255), 2)
+
+    if robot_pose is not None and danger_state is not None and danger_state.nearest_point is not None:
+        px, py = danger_state.nearest_point
+        cv.circle(out, (px, py), 5, (255, 0, 255), -1)
+        cv.line(out, (robot_pose.x, robot_pose.y), (px, py), (255, 0, 255), 2)
+        cv.putText(
+            out,
+            f"danger_d={danger_state.nearest_distance_px:.0f}px",
+            (10, 140),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 0, 255),
+            2,
+        )
 
     for candidate in balls:
         ghost_color = (225, 225, 225) if candidate.color_name == "white" else (80, 120, 255)
@@ -698,22 +757,23 @@ def main() -> int:
                 tuning = tuner.read()
 
             robot_pose = detect_robot_pose(frame, settings)
-#            balls = detect_balls(
-#                frame,
-#                settings,
-#                orange_range=tuning.orange_range,
-#                white_range=tuning.white_range,
-#                white_sat_split=tuning.white_sat_split,
-#            )
-#            ball = choose_target_ball(balls, robot_pose)
-            danger, edges, danger_contours = detect_danger_zones(frame, settings, robot_pose)
+            balls = detect_balls(
+                frame,
+                settings,
+                orange_range=tuning.orange_range,
+                white_range=tuning.white_range,
+                white_sat_split=tuning.white_sat_split,
+            )
+            ball = choose_target_ball(balls, robot_pose)
+            danger, danger_state, edges, danger_contours = detect_danger_zones(frame, settings, robot_pose)
             command, reason = decide_command(
                 frame.shape[1],
-                None, #ball
+                ball,
                 danger,
                 settings,
                 robot_pose=robot_pose,
                 frame_height=frame.shape[0],
+                danger_state=danger_state,
             )
 
             if command == candidate_command:
@@ -739,14 +799,15 @@ def main() -> int:
             #display = annotate(frame, balls, ball, robot_pose, settings.robot_footprint_length_px, settings.robot_footprint_width_px, danger, command, reason, last_sent_command)
             display = annotate(
                 frame,
-                [],
-                None,
+                balls,
+                ball,
                 robot_pose,
                 settings.robot_footprint_length_px,
                 settings.robot_footprint_width_px,
                 edges,
                 danger_contours,
                 danger,
+                danger_state,
                 command,
                 reason,
                 last_sent_command,
