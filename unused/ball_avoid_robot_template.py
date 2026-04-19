@@ -152,14 +152,7 @@ class RobotClient:
             finally:
                 self.sock = None
 
-# (Hue, Saturation, brightness)
-# Orange ping pong balls can look darker/less saturated at distance or in shadow.
-ORANGE_RANGE = HSVRange((11, 100, 210), (19, 255, 255))
-# White ping pong balls under indoor light are often slightly yellow with darker edges.
-WHITE_RANGE = HSVRange((0, 0, 189), (179, 22, 255))
-# Barrier color is red (camera sees red tops).
-RED_RANGE_1 = HSVRange((0, 95, 60), (10, 255, 255))
-RED_RANGE_2 = HSVRange((165, 95, 60), (179, 255, 255))
+
 
 
 class HSVLiveTuner:
@@ -356,34 +349,6 @@ def detect_balls(
         )
 
     return balls
-
-
-def detect_ball(
-    frame: np.ndarray,
-    settings: Settings,
-    orange_range: HSVRange = ORANGE_RANGE,
-    white_range: HSVRange = WHITE_RANGE,
-    white_sat_split: Optional[float] = None,
-) -> Optional[BallDetection]:
-    balls = detect_balls(
-        frame,
-        settings,
-        orange_range=orange_range,
-        white_range=white_range,
-        white_sat_split=white_sat_split,
-    )
-    if not balls:
-        return None
-
-    # Backward-compatible single target selection when robot pose is unavailable.
-    best = balls[0]
-    for current in balls[1:]:
-        prev_score = best.confidence * best.radius
-        new_score = current.confidence * current.radius
-        if new_score > prev_score:
-            best = current
-    return best
-
 
 def choose_target_ball(balls: list[BallDetection], robot_pose: Optional[RobotPose]) -> Optional[BallDetection]:
     if not balls:
@@ -616,7 +581,6 @@ def annotate(
     robot_footprint_width_px: float,
     danger_mask: np.ndarray,
     danger_contours: list[np.ndarray],
-    danger: DangerFlags,
     danger_state: Optional[DangerState],
     command: str,
     reason: str,
@@ -688,15 +652,6 @@ def annotate(
         y2 = int(robot_pose.y + arrow_len * math.sin(robot_pose.heading_rad))
         cv.arrowedLine(out, (robot_pose.x, robot_pose.y), (x2, y2), (0, 255, 0), 2, tipLength=0.25)
         cv.putText(out, "robot", (robot_pose.x + 10, robot_pose.y - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-#    if danger.front:
-#        cv.putText(out, "DANGER FRONT", (w // 2 - 95, 28), cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
-#    if danger.back:
-#        cv.putText(out, "DANGER BACK", (w // 2 - 88, h - 24), cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
-#    if danger.left:
-#        cv.putText(out, "DANGER LEFT", (10, h // 2), cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
-#    if danger.right:
-#        cv.putText(out, "DANGER RIGHT", (w - 180, h // 2), cv.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 255), 2)
 
     cv.putText(out, f"cmd={command} reason={reason}", (10, 56), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
     cv.putText(out, f"last_sent={last_sent}", (10, 84), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
