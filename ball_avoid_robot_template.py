@@ -82,15 +82,16 @@ class Settings:
     danger_center_deadband_px: int = 60
     danger_distance_px: float = 35.0
     danger_too_close_px: float = 35.0
-    danger_rear_ignore_px: float = 45.0
-    aruco_dictionary: int = cv.aruco.DICT_4X4_100
+    danger_rear_ignore_px: float = 35.0
+    aruco_dictionary: int = cv.aruco.DICT_4X4_50
     robot_marker_id: int = 7
     use_robot_pose: bool = True
     pose_turn_deadband_deg: float = 12.0
-    pose_arrival_distance_px: float = 70.0
+    pose_arrival_distance_px: float = 110.0
     white_sat_split: float = 80.0
-    robot_footprint_length_px: float = 70.0
-    robot_footprint_width_px: float = 70.0
+    robot_footprint_length_px: float = 230.0
+    robot_footprint_width_px: float = 80.0
+    commit_forward_window_sec: float = 3 #TODO tweak
 
 
 @dataclass
@@ -102,10 +103,10 @@ class HSVTuning:
 
 # Single-byte robot protocol. Change if your robot expects different keys.
 CMD_FORWARD = "i"
+CMD_BACKWARD = "k"
 CMD_LEFT = "j"
 CMD_RIGHT = "l"
 CMD_STOP = "s"
-#CMD_SEARCH = "a"
 CMD_QUIT = "q"
 
 
@@ -155,7 +156,7 @@ class RobotClient:
 # Orange ping pong balls can look darker/less saturated at distance or in shadow.
 ORANGE_RANGE = HSVRange((11, 100, 210), (19, 255, 255))
 # White ping pong balls under indoor light are often slightly yellow with darker edges.
-WHITE_RANGE = HSVRange((0, 0, 189), (179, 95, 255))
+WHITE_RANGE = HSVRange((0, 0, 189), (179, 22, 255))
 # Barrier color is red (camera sees red tops).
 RED_RANGE_1 = HSVRange((0, 95, 60), (10, 255, 255))
 RED_RANGE_2 = HSVRange((165, 95, 60), (179, 255, 255))
@@ -398,6 +399,24 @@ def choose_target_ball(balls: list[BallDetection], robot_pose: Optional[RobotPos
     return min(balls, key=lambda b: (b.x - robot_pose.x) ** 2 + (b.y - robot_pose.y) ** 2)
 
 
+def match_committed_target(
+    committed_target: Optional[BallDetection],
+    balls: list[BallDetection],
+    max_match_distance_px: float = 90.0,
+) -> Optional[BallDetection]:
+    if committed_target is None or not balls:
+        return None
+
+    best = min(
+        balls,
+        key=lambda b: (b.x - committed_target.x) ** 2 + (b.y - committed_target.y) ** 2,
+    )
+    dist = math.hypot(float(best.x - committed_target.x), float(best.y - committed_target.y))
+    if dist <= max_match_distance_px:
+        return best
+    return None
+
+
 def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPose]:
     if not settings.use_robot_pose:
         return None
@@ -423,8 +442,8 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
     cx = int(np.mean(pts[:, 0]))
     cy = int(np.mean(pts[:, 1]))
 
-    top_mid = 0.5 * (pts[0] + pts[1])
-    bottom_mid = 0.5 * (pts[2] + pts[3])
+    top_mid = 0.5 * (pts[0] + pts[3])
+    bottom_mid = 0.5 * (pts[2] + pts[1])
     forward_vec = top_mid - bottom_mid
     heading = math.atan2(float(forward_vec[1]), float(forward_vec[0]))
 
@@ -541,7 +560,7 @@ def decide_command(
         return CMD_LEFT, f"danger:avoid_right d={danger_state.nearest_distance_px:.0f}"
 
     if danger.front and danger.center:
-        return CMD_STOP, "danger:front"
+        return CMD_BACKWARD, "danger:front"
     if danger.back and not danger.front and not danger.left and not danger.right:
         return CMD_FORWARD, "danger:back"
     if danger.left and not danger.right:
@@ -648,7 +667,7 @@ def annotate(
         cv.putText(out, label, text_pos, cv.FONT_HERSHEY_SIMPLEX, 0.45, ghost_color, 2)
 
     if ball is not None:
-        color = (255, 255, 255) if ball.color_name == "white" else (0, 165, 255)
+        color = (0, 255, 0)
         cv.circle(out, (ball.x, ball.y), int(ball.radius), color, 2)
         cv.circle(out, (ball.x, ball.y), 3, color, -1)
         cv.putText(
@@ -760,6 +779,9 @@ def main() -> int:
     candidate_count = 0
     last_sent_command: Optional[str] = None
     last_send_time = 0.0
+    committed_target: Optional[BallDetection] = None
+    hold_until = 0.0
+    last_target_seen_time = 0.0
 
     try:
         while True:
@@ -780,7 +802,31 @@ def main() -> int:
                 white_range=tuning.white_range,
                 white_sat_split=tuning.white_sat_split,
             )
-            ball = choose_target_ball(balls, robot_pose)
+            raw_no_ball = len(balls) == 0
+            now = time.monotonic()
+            commit_active = now < hold_until
+
+            raw_ball = choose_target_ball(balls, robot_pose)
+
+            if committed_target is not None:
+                matched_target = match_committed_target(committed_target, balls)
+                if matched_target is not None:
+                    ball = matched_target
+                elif commit_active:
+                    ball = committed_target
+                else:
+                    committed_target = None
+                    ball = raw_ball
+            else:
+                ball = raw_ball
+                if raw_ball is not None:
+                    committed_target = raw_ball
+
+            if raw_ball is not None:
+                last_target_seen_time = now
+            elif not commit_active:
+                committed_target = None
+
             danger, danger_state, edges, danger_contours = detect_danger_zones(frame, settings, robot_pose)
             command, reason = decide_command(
                 frame.shape[1],
@@ -791,6 +837,40 @@ def main() -> int:
                 frame_height=frame.shape[0],
                 danger_state=danger_state,
             )
+
+            if not danger_state.too_close and not reason.startswith("danger"):
+                if reason.endswith(":arrived") and ball is not None:
+                    committed_target = ball
+                    forward_commit_until = now + settings.commit_forward_window_sec
+                    command = CMD_FORWARD
+                    reason = f"commit:{reason}"
+                elif committed_target is not None and hold_until < now:
+                    hold_until = last_target_seen_time + settings.commit_forward_window_sec
+                    print("match_committed_target: ", match_committed_target(committed_target, balls))
+                    if not raw_no_ball and match_committed_target(committed_target, balls) is None:
+                        #forward_commit_until = max(forward_commit_until, hold_until)
+                        #if hold_until < now:
+                            #committed_target = ball
+                        command = CMD_FORWARD
+                        reason = "commit:target_lost"
+                    elif raw_no_ball and now <= hold_until:
+                        #forward_commit_until = max(forward_commit_until, hold_until)
+                        command = CMD_FORWARD
+                        reason = "commit:no_ball"
+
+                    #if now < hold_until:
+                        #committed_target = None
+
+            print("last_target_seen_time: ", last_target_seen_time)
+            #print("forward_commit_until: ", forward_commit_until)
+            print("hold_until: ", hold_until)
+            print("now: ", now)
+            print("")
+
+            if now < hold_until and not danger_state.too_close and not reason.startswith("danger"):
+                #command = CMD_FORWARD
+                if not reason.startswith("commit:"):
+                    reason = f"commit:{reason}"
 
             if command == candidate_command:
                 candidate_count += 1
