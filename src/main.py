@@ -5,7 +5,7 @@ from typing import Optional
 
 from config import *
 from robot_client import RobotClient
-from src.models import BallDetection, RobotPose
+from src.models import BallDetection
 from src.navigation import decide_command
 from src.ui import annotate
 from src.vision import detect_balls, choose_target_ball, match_candidate_target, detect_robot_pose, detect_danger_zones

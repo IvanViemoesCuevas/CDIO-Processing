@@ -2,7 +2,7 @@
 
 import math
 
-import cv2
+import cv2 as cv
 import numpy as np
 
 from config import *
@@ -178,7 +178,7 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
     return RobotPose(x=cx, y=cy, heading_rad=heading, confidence=-1)
 
 def build_danger_mask(frame: np.ndarray) -> np.ndarray:
-    hsv_frame = cv.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
     red1 = cv.inRange(hsv_frame, RED_RANGE_1.lower, RED_RANGE_1.upper)
     red2 = cv.inRange(hsv_frame, RED_RANGE_2.lower, RED_RANGE_2.upper)
     mask = cv.bitwise_or(red1, red2)

@@ -16,7 +16,17 @@ class Settings:
     max_ball_radius: float = 70.0
     min_ball_confidence: float = 0.5
 
+    align_deadband_px: int = 35
+    target_radius_px: float = 38.0
     commit_forward_window_sec: float = 3  # TODO tweak
+
+    min_obstacle_area: int = 400
+    danger_center_deadband_px: int = 60
+    danger_distance_px: float = 35.0
+    danger_too_close_px: float = 35.0
+    danger_rear_ignore_px: float = 35.0
+    pose_turn_deadband_deg: float = 12.0
+    pose_arrival_distance_px: float = 110.0
 
 
 # (Hue, Saturation, brightness)
