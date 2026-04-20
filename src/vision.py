@@ -117,7 +117,7 @@ def choose_target_ball(balls: list[BallDetection], robot_pose: Optional[RobotPos
         for current in balls[1:]:
             if current.confidence * current.radius > best.confidence * best.radius:
                 best = current
-            return best
+        return best
 
     # Else return ball closest to robot
     return min(balls, key=lambda b: (b.x - robot_pose.x) ** 2 + (b.y - robot_pose.y) ** 2)

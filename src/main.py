@@ -28,9 +28,14 @@ def main() -> int:
     )
 
     # Get the video capture
-    cap = cv.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error opening video stream")
+    cap0 = cv.VideoCapture(0)
+    if not cap0.isOpened():
+        print("Error opening video stream 0")
+        return 1
+
+    cap1 = cv.VideoCapture(1)
+    if not cap1.isOpened():
+        print("Error opening video stream 1")
         return 1
 
     # Connect to the client
@@ -49,7 +54,7 @@ def main() -> int:
 
     try:
         while True:
-            ok, frame = cap.read()
+            ok, frame = cap0.read()
             if not ok:
                 print("Error reading frame")
                 break
@@ -157,7 +162,7 @@ def main() -> int:
                 break
 
     finally:
-        cap.release()
+        cap0.release()
         if client is not None:
             client.send_char(CMD_QUIT)
             client.close()
