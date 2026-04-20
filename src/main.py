@@ -5,7 +5,7 @@ from typing import Optional
 
 from config import *
 from robot_client import RobotClient
-from src.models import BallDetection
+from src.models import NavigationContext, NavigationState
 from src.navigation import decide_command
 from src.ui import annotate
 from src.vision import detect_balls, choose_target_ball, match_candidate_target, detect_robot_pose, detect_danger_zones
@@ -44,10 +44,8 @@ def main() -> int:
     last_send_command: Optional[str] = None
     last_send_time = 0.0
 
-    # Setup target variables
-    candidate_target: Optional[BallDetection] = None
-    hold_command_until = 0.0
-    last_target_seen_time = 0.0
+    # Setup navigation state variables
+    nav_state = NavigationState()
 
     try:
         while True:
@@ -70,56 +68,52 @@ def main() -> int:
 
             # Choose target
             now = time.monotonic()
-            commit_active = now < hold_command_until
+            commit_active = now < nav_state.hold_command_until
             sample_ball = choose_target_ball(balls, robot_pose)
+            matched_candidate = (
+                match_candidate_target(nav_state.candidate_target, balls)
+                if nav_state.candidate_target is not None
+                else None
+            )
 
-            if candidate_target is not None:
-                matched_target = match_candidate_target(candidate_target, balls)
-                if matched_target is not None:
-                    target_ball = matched_target
+            if nav_state.candidate_target is not None:
+                if matched_candidate is not None:
+                    target_ball = matched_candidate
                 elif commit_active:
-                    target_ball = candidate_target
+                    target_ball = nav_state.candidate_target
                 else:
-                    candidate_target = None
+                    nav_state.candidate_target = None
                     target_ball = sample_ball
             else:
                 target_ball = sample_ball
                 if sample_ball is not None:
-                    candidate_target = sample_ball
+                    nav_state.candidate_target = sample_ball
 
             if sample_ball is not None:
-                last_target_seen_time = now
+                nav_state.last_target_seen_time = now
             elif not commit_active:
-                candidate_target = None
+                nav_state.candidate_target = None
 
             # Detect danger zones
             danger, danger_state, edges, danger_contours = detect_danger_zones(frame, settings, robot_pose)
 
             # Decide command
-            command, reason = decide_command(
-                frame_width=frame.shape[1],
-                target_ball=target_ball,
+            decision, nav_state = decide_command(
+                context=NavigationContext(
+                    frame_width=frame.shape[1],
+                    target_ball=target_ball,
+                    danger=danger,
+                    robot_pose=robot_pose,
+                    danger_state=danger_state,
+                    now=now,
+                    balls_count=len(balls),
+                    candidate_target_visible=matched_candidate is not None,
+                ),
+                state=nav_state,
                 settings=settings,
-                robot_pose=robot_pose,
-                danger=danger,
-                danger_state=danger_state,
             )
-
-            # FIXME could probably be moved inside "deciceCommand()"
-            #if not danger_state.too_close and not reason.startswith("danger"):
-            if reason.endswith(":arrived") and target_ball is not None:
-                candidate_target = target_ball
-                command = CMD_FORWARD
-                reason = f"commit:{reason}"
-            elif candidate_target is not None and hold_command_until < now:
-                hold_command_until = last_target_seen_time + settings.commit_forward_window_sec
-                print("match_committed_target: ", match_candidate_target(candidate_target, balls))
-                if not len(balls) == 0 and match_candidate_target(candidate_target, balls) is None:
-                    command = CMD_FORWARD
-                    reason = "commit:target_lost"
-                elif len(balls) == 0 and now <= hold_command_until:
-                    command = CMD_FORWARD
-                    reason = "commit:no_ball"
+            command = decision.command
+            reason = decision.reason
 
             if command == candidate_command:
                 candidate_count += 1
@@ -129,9 +123,9 @@ def main() -> int:
 
             # Decide whether to send command
             now = time.time()
-            should_send = ( # TODO is this correct?
+            should_send = (
                 candidate_count >= settings.stable_frames_required
-                and candidate_command != last_send_command
+                #and candidate_command != last_send_command
                 and now - last_send_time >= settings.send_interval_sec
             )
 

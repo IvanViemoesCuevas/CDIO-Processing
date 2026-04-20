@@ -36,3 +36,28 @@ class DangerState:
     nearest_dx_body: float = 0.0
     nearest_dy_body: float = 0.0
     too_close: bool = False
+
+
+@dataclass
+class NavigationContext:
+    frame_width: int
+    target_ball: Optional[BallDetection]
+    danger: DangerFlags
+    robot_pose: Optional[RobotPose]
+    danger_state: Optional[DangerState]
+    now: float
+    balls_count: int
+    candidate_target_visible: bool
+
+
+@dataclass
+class NavigationState:
+    candidate_target: Optional[BallDetection] = None
+    hold_command_until: float = 0.0
+    last_target_seen_time: float = 0.0
+
+
+@dataclass
+class NavigationResult:
+    command: str
+    reason: str

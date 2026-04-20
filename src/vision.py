@@ -8,7 +8,6 @@ import numpy as np
 from config import *
 from models import *
 
-# TODO - check function
 def build_ball_masks(
     hsv_frame: np.ndarray,
     orange_range: HSVRange = ORANGE_RANGE,
@@ -28,7 +27,6 @@ def build_ball_masks(
     mask = cv.bitwise_or(orange_mask, white_mask)
     return orange_mask, white_mask, mask
 
-# TODO - check function
 def build_ball_mask(
     hsv_frame: np.ndarray,
     orange_range: HSVRange = ORANGE_RANGE,
