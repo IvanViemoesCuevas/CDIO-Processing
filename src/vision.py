@@ -160,7 +160,7 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
     match = np.where(ids.flatten() == target_index)[0]
     if len(match) == 0:
         return None
-    target_index = int[match[0]]
+    target_index = int(match[0])
 
     # FIXME maybe use the actual corner locations instead of just creating a square (Could also calculate the confidence)
 

@@ -33,10 +33,10 @@ def main() -> int:
         print("Error opening video stream 0")
         return 1
 
-    cap1 = cv.VideoCapture(1)
-    if not cap1.isOpened():
-        print("Error opening video stream 1")
-        return 1
+    #cap1 = cv.VideoCapture(1)
+    #if not cap1.isOpened():
+    #    print("Error opening video stream 1")
+    #    return 1
 
     # Connect to the client
     client: Optional[RobotClient] = None
