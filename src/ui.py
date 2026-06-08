@@ -6,7 +6,7 @@ import cv2 as cv
 
 from models import *
 
-ROBOT_LENGTH_PX = 230
+ROBOT_LENGTH_PX = 170
 ROBOT_WIDTH_PX = 80
 
 def draw_robot_footprint(frame: np.ndarray, robot_pose: RobotPose, length_px: float, width_px: float) -> None:

@@ -168,8 +168,8 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
     cx = int(np.mean(pts[:, 0]))
     cy = int(np.mean(pts[:, 1]))
 
-    top_mid = 0.5 * (pts[0] + pts[3])
-    bottom_mid = 0.5 * (pts[2] + pts[1])
+    top_mid = 0.5 * (pts[2] + pts[1])
+    bottom_mid = 0.5 * (pts[0] + pts[3])
     forward_vec = top_mid - bottom_mid
     heading = math.atan2(float(forward_vec[1]), float(forward_vec[0]))
 
