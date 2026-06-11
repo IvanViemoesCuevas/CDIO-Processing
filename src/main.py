@@ -8,7 +8,15 @@ from robot_client import RobotClient
 from src.models import NavigationContext, NavigationState
 from src.navigation import decide_command
 from src.ui import annotate
-from src.vision import detect_balls, choose_target_ball, match_candidate_target, detect_robot_pose, detect_danger_zones
+from src.vision import (
+    BallDetectionTuner,
+    choose_target_ball,
+    detect_balls,
+    detect_danger_zones,
+    detect_robot_pose,
+    make_ball_debug_view,
+    match_candidate_target,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -16,6 +24,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--host", default="172.20.10.2", help="Robot IP/hostname")
     parser.add_argument("--port", type=int, default=12345, help="Robot TCP port")
     parser.add_argument("--dry-run", action="store_true", help="Do not open socket; only print decisions")
+    parser.add_argument(
+        "--tune-hsv",
+        action="store_true",
+        help="Open HSV trackbars and show a live ball-mask debug view",
+    )
 
     return parser.parse_args()
 
@@ -43,6 +56,20 @@ def main() -> int:
     if not args.dry_run:
         client = RobotClient(settings.host, settings.port, settings.reconnect_delay_sec)
 
+    tuner: Optional[BallDetectionTuner] = None
+    if args.tune_hsv:
+        tuner = BallDetectionTuner(
+            orange_range=ORANGE_RANGE,
+            white_range=WHITE_RANGE,
+            white_sat_split=settings.white_sat_split,
+        )
+
+    default_tuning = BallDetectionTuning(
+        orange_range=ORANGE_RANGE,
+        white_range=WHITE_RANGE,
+        white_sat_split=settings.white_sat_split,
+    )
+
     # Setup command variables
     candidate_command: Optional[str] = None
     candidate_count = 0
@@ -62,13 +89,15 @@ def main() -> int:
             # Detect robot location and direction
             robot_pose = detect_robot_pose(frame, settings)
 
+            tuning = tuner.read() if tuner is not None else default_tuning
+
             # Detect balls
             balls = detect_balls(
                 frame=frame,
                 settings=settings,
-                orange_range=ORANGE_RANGE,
-                white_range=WHITE_RANGE,
-                white_sat_split=80.0
+                orange_range=tuning.orange_range,
+                white_range=tuning.white_range,
+                white_sat_split=tuning.white_sat_split,
             )
 
             # Choose target
@@ -153,6 +182,17 @@ def main() -> int:
                 # FIXME - Doesn't draw danger zones currently, but they are there otherwise
             )
             cv.imshow("Golfbot", display)
+
+            if tuner is not None:
+                cv.imshow(
+                    "Ball Masks Debug",
+                    make_ball_debug_view(
+                        frame,
+                        orange_range=tuning.orange_range,
+                        white_range=tuning.white_range,
+                        white_sat_split=tuning.white_sat_split,
+                    ),
+                )
 
             # Check for the quit key
             key = cv.waitKey(1) & 0xFF

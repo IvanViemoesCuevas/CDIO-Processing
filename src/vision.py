@@ -1,12 +1,35 @@
+from __future__ import annotations
+
 # All vision detection code
 
 import math
 
 import cv2 as cv
 import numpy as np
+from numpy.typing import NDArray
+try:
+    from ultralytics import YOLO
+except Exception:  # pragma: no cover - graceful fallback if ultralytics not available
+    YOLO = None
 
 from config import *
 from models import *
+
+# Path to your custom YOLO model. Replace this placeholder with your model path.
+YOLO_MODEL_PATH = "custom_yolo.pt"
+
+# Lazily-loaded YOLO model instance
+_yolo_model = None
+
+def _ensure_yolo_model():
+    """Lazy-load the YOLO model. Returns None if ultralytics not installed."""
+    global _yolo_model
+    if YOLO is None:
+        return None
+    if _yolo_model is None:
+        # Instantiate model (user should edit YOLO_MODEL_PATH to point at their weights)
+        _yolo_model = YOLO(YOLO_MODEL_PATH)
+    return _yolo_model
 
 def build_ball_masks(
     hsv_frame: np.ndarray,
@@ -40,6 +63,127 @@ def build_ball_mask(
     return mask
 
 
+class BallDetectionTuner:
+    """Debug-only live tuner for the HSV thresholds used by ball detection."""
+
+    WINDOW_NAME = "Ball Detection Tuner"
+
+    def __init__(
+        self,
+        orange_range: HSVRange = ORANGE_RANGE,
+        white_range: HSVRange = WHITE_RANGE,
+        white_sat_split: float = 80.0,
+    ) -> None:
+        cv.namedWindow(self.WINDOW_NAME, cv.WINDOW_NORMAL)
+
+        self._add("OH_lo", orange_range.lower[0], 179)
+        self._add("OS_lo", orange_range.lower[1], 255)
+        self._add("OV_lo", orange_range.lower[2], 255)
+        self._add("OH_hi", orange_range.upper[0], 179)
+        self._add("OS_hi", orange_range.upper[1], 255)
+        self._add("OV_hi", orange_range.upper[2], 255)
+
+        self._add("WH_lo", white_range.lower[0], 179)
+        self._add("WS_lo", white_range.lower[1], 255)
+        self._add("WV_lo", white_range.lower[2], 255)
+        self._add("WH_hi", white_range.upper[0], 179)
+        self._add("WS_hi", white_range.upper[1], 255)
+        self._add("WV_hi", white_range.upper[2], 255)
+
+        self._add("white_sat_split", int(white_sat_split), 255)
+
+    def _add(self, name: str, value: int, max_value: int) -> None:
+        cv.createTrackbar(name, self.WINDOW_NAME, int(value), max_value, lambda _x: None)
+
+    def _get(self, name: str) -> int:
+        return int(cv.getTrackbarPos(name, self.WINDOW_NAME))
+
+    def read(self) -> BallDetectionTuning:
+        orange_lo = (self._get("OH_lo"), self._get("OS_lo"), self._get("OV_lo"))
+        orange_hi = (self._get("OH_hi"), self._get("OS_hi"), self._get("OV_hi"))
+        white_lo = (self._get("WH_lo"), self._get("WS_lo"), self._get("WV_lo"))
+        white_hi = (self._get("WH_hi"), self._get("WS_hi"), self._get("WV_hi"))
+
+        # Keep lower <= upper so inRange always receives a valid interval.
+        orange_lower = (
+            min(orange_lo[0], orange_hi[0]),
+            min(orange_lo[1], orange_hi[1]),
+            min(orange_lo[2], orange_hi[2]),
+        )
+        orange_upper = (
+            max(orange_lo[0], orange_hi[0]),
+            max(orange_lo[1], orange_hi[1]),
+            max(orange_lo[2], orange_hi[2]),
+        )
+        white_lower = (
+            min(white_lo[0], white_hi[0]),
+            min(white_lo[1], white_hi[1]),
+            min(white_lo[2], white_hi[2]),
+        )
+        white_upper = (
+            max(white_lo[0], white_hi[0]),
+            max(white_lo[1], white_hi[1]),
+            max(white_lo[2], white_hi[2]),
+        )
+
+        return BallDetectionTuning(
+            orange_range=HSVRange(orange_lower, orange_upper),
+            white_range=HSVRange(white_lower, white_upper),
+            white_sat_split=float(self._get("white_sat_split")),
+        )
+
+
+def make_ball_debug_view(
+    frame: np.ndarray,
+    orange_range: HSVRange = ORANGE_RANGE,
+    white_range: HSVRange = WHITE_RANGE,
+    white_sat_split: float = 80.0,
+) -> np.ndarray:
+    hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+    orange_mask, white_mask, combined_mask = build_ball_masks(
+        hsv,
+        orange_range=orange_range,
+        white_range=white_range,
+    )
+
+    orange_vis = cv.cvtColor(orange_mask, cv.COLOR_GRAY2BGR)
+    white_vis = cv.cvtColor(white_mask, cv.COLOR_GRAY2BGR)
+    combined_vis = cv.cvtColor(combined_mask, cv.COLOR_GRAY2BGR)
+    camera_vis = frame.copy()
+
+    cv.putText(orange_vis, "orange mask", (10, 26), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+    cv.putText(white_vis, "white mask", (10, 26), cv.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    cv.putText(combined_vis, "combined", (10, 26), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    cv.putText(camera_vis, "camera", (10, 26), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+    top = np.hstack((camera_vis, orange_vis))
+    bottom = np.hstack((white_vis, combined_vis))
+    debug_view = np.vstack((top, bottom))
+
+    cv.putText(
+        debug_view,
+        (
+            f"orange={orange_range.lower}-{orange_range.upper} "
+            f"white={white_range.lower}-{white_range.upper} sat_split={int(white_sat_split)}"
+        ),
+        (10, debug_view.shape[0] - 38),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.50,
+        (0, 255, 255),
+        1,
+    )
+    cv.putText(
+        debug_view,
+        "q=quit | tune values with Ball Detection Tuner",
+        (10, debug_view.shape[0] - 12),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 255, 255),
+        2,
+    )
+    return debug_view
+
+
 def detect_balls(
     frame: np.ndarray,
     settings: Settings,
@@ -47,62 +191,126 @@ def detect_balls(
     white_range: HSVRange = WHITE_RANGE,
     white_sat_split: Optional[float] = None,
 ) -> list[BallDetection]:
-    """Detect candidate ping-pong balls and score them by shape/size confidence."""
-    # Work in HSV because thresholding ball colors is more stable than in BGR.
-    hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
-    mask = build_ball_mask(hsv_frame, orange_range=orange_range, white_range=white_range)
-    
-    # Find contours
-    contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-    
+    """Detect candidate ping-pong balls using a YOLO model and convert detections
+    into the project's BallDetection dataclass so the navigation code can remain
+    unchanged.
+
+    The model path is a placeholder in `YOLO_MODEL_PATH` and must be updated by
+    the user to point to their custom yolo26n weights file.
+    If the ultralytics package is not available or the model fails to load,
+    this function falls back to the original HSV+contour detector.
+    """
+
+    # Prefer YOLO if available
+    model = _ensure_yolo_model()
+    if model is None:
+        # Fallback to original contour-based method if YOLO not installed
+        hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+        mask = build_ball_mask(hsv_frame, orange_range=orange_range, white_range=white_range)
+        sat_split = settings.white_sat_split if white_sat_split is None else white_sat_split
+
+        contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+        balls: list[BallDetection] = []
+        for contour in contours:
+            area = cv.contourArea(contour)
+            if area < settings.min_ball_area or area > settings.max_ball_area:
+                continue
+            perimeter = cv.arcLength(contour, True)
+            if perimeter <= 0.0:
+                continue
+            circularity = float(4.0 * np.pi * area / (perimeter * perimeter))
+            if circularity < settings.min_ball_circularity:
+                continue
+            (x_float, y_float), radius = cv.minEnclosingCircle(contour)
+            if radius < settings.min_ball_radius or radius > settings.max_ball_radius:
+                continue
+            x = int(x_float)
+            y = int(y_float)
+            sample = hsv_frame[max(0, y-1): y+2, max(0, x-1): x+2]
+            if sample.size == 0:
+                continue
+            sat_mean = float(sample[:, :, 1].mean())
+            color_name = "white" if sat_mean < sat_split else "orange"
+            confidence = min(1.0, circularity * 0.65 + min(1.0, area / 2000.0) * 0.35)
+            if confidence < settings.min_ball_confidence:
+                continue
+            balls.append(
+                BallDetection(
+                    x=x,
+                    y=y,
+                    radius=radius,
+                    color_name=color_name,
+                    confidence=confidence,
+                    circularity=circularity,
+                )
+            )
+        return balls
+
+    # Run YOLO inference on the frame. The ultralytics model accepts BGR frames.
+    try:
+        results = model(frame, verbose=False)
+    except Exception as e:
+        # If inference fails for any reason, return empty list rather than crash.
+        print(f"YOLO inference failed: {e}")
+        return []
+
+    # Results may be batched; take the first (and only) result for this single frame.
+    result = results[0]
+    boxes = getattr(result, "boxes", [])
+    names = getattr(result, "names", {})
+
     balls: list[BallDetection] = []
-    
-    for contour in contours:
-        area = cv.contourArea(contour)
-        # Reject tiny noise and large non-ball blobs.
-        if area < settings.min_ball_area or area > settings.max_ball_area:
-            continue
-        
-        perimeter = cv.arcLength(contour, True)
-        if perimeter <= 0.0:
-            continue
-        
-        circularity = float(4.0 * np.pi * area / (perimeter * perimeter))
-        # Ideal circle is 1.0; lower values are elongated/irregular shapes.
-        if circularity < settings.min_ball_circularity:
+    for box in boxes:
+        # Extract coordinates
+        try:
+            xyxy = box.xyxy[0]
+        except Exception:
+            # Some ultralytics versions expose xyxy as a plain array
+            xyxy = box.xyxy
+        try:
+            x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+        except Exception:
+            # If we can't parse box coordinates, skip this detection
             continue
 
-        (x_float, y_float), radius = cv.minEnclosingCircle(contour)
-        # Radius gate helps remove shapes that pass circularity but are wrong scale.
-        if radius < settings.min_ball_radius or radius > settings.max_ball_radius:
+        # Confidence and class
+        try:
+            conf = float(box.conf[0])
+        except Exception:
+            try:
+                conf = float(box.conf)
+            except Exception:
+                conf = 0.0
+
+        try:
+            cls = int(box.cls[0])
+        except Exception:
+            try:
+                cls = int(box.cls)
+            except Exception:
+                cls = -1
+
+        class_name = str(names.get(cls, "unknown")) if names is not None else "unknown"
+
+        # Filter by configured confidence threshold
+        if conf < settings.min_ball_confidence:
             continue
-        
-        x = int(x_float)
-        y = int(y_float)
-        
-        sample = hsv_frame[max(0, y-1): y+2, max(0, x-1): x+2]
-        if sample.size == 0:
-            continue
-        # Low saturation at center tends to be white, higher saturation tends to orange.
-        sat_mean = float(sample[:, :, 1].mean())
-        color_name = "white" if sat_mean < white_sat_split else "orange"
-        
-        # Blend roundness and contour area into a simple confidence score [0, 1].
-        confidence = min(1.0, circularity * 0.65 + min(1.0, area / 2000.0) * 0.35)
-        if confidence < settings.min_ball_confidence:
-            continue
-            
+
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        radius = max((x2 - x1), (y2 - y1)) / 2.0
+
         balls.append(
             BallDetection(
-                x=x,
-                y=y,
-                radius=radius,
-                color_name=color_name,
-                confidence=confidence,
-                circularity=circularity,
+                x=int(cx),
+                y=int(cy),
+                radius=float(radius),
+                color_name=class_name,
+                confidence=float(conf),
+                circularity=0.0,
             )
         )
-    
+
     return balls
 
 
@@ -205,7 +413,8 @@ def detect_danger_zones(
             continue
         filtered_mask[labels == label] = 255
 
-    kept_contours, _ = cv.findContours(filtered_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    kept_contours_raw, _ = cv.findContours(filtered_mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+    kept_contours: list[np.ndarray] = list(kept_contours_raw)
 
     ys, xs = np.where(filtered_mask > 0)
     state = DangerState()
@@ -213,9 +422,9 @@ def detect_danger_zones(
         return flags, state, filtered_mask, kept_contours
 
     if robot_pose is not None:
-        dx_img = xs.astype(np.float32) - float(robot_pose.x)
-        dy_img = ys.astype(np.float32) - float(robot_pose.y)
-        dist2 = dx_img * dx_img + dy_img * dy_img
+        dx_img: NDArray[np.float32] = np.asarray(xs, dtype=np.float32) - np.float32(robot_pose.x)
+        dy_img: NDArray[np.float32] = np.asarray(ys, dtype=np.float32) - np.float32(robot_pose.y)
+        dist2: NDArray[np.float32] = dx_img * dx_img + dy_img * dy_img
         nearest_index = int(np.argmin(dist2))
 
         state.nearest_distance_px = float(np.sqrt(dist2[nearest_index]))
@@ -226,8 +435,14 @@ def detect_danger_zones(
         right_x = -heading_y
         right_y = heading_x
 
-        forward_body = dx_img * heading_x + dy_img * heading_y
-        right_body = dx_img * right_x + dy_img * right_y
+        forward_body: NDArray[np.float32] = np.asarray(
+            dx_img * np.float32(heading_x) + dy_img * np.float32(heading_y),
+            dtype=np.float32,
+        )
+        right_body: NDArray[np.float32] = np.asarray(
+            dx_img * np.float32(right_x) + dy_img * np.float32(right_y),
+            dtype=np.float32,
+        )
 
         near = dist2 <= float(settings.danger_distance_px * settings.danger_distance_px)
         if np.any(near):

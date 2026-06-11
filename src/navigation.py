@@ -1,12 +1,106 @@
-# All decision logic here
 import math
 
 from config import *
+
 from models import (
     NavigationContext,
     NavigationResult,
     NavigationState,
 )
+
+# Calibration offsets between the elevated ArUco marker and the robot's real ground pose.
+# Since the marker works when placed on the ground, tune the forward/right pixel offsets first.
+# Only tune heading if the marker is physically rotated relative to the robot's forward direction.
+
+MARKER_HEADING_OFFSET_DEG = 0.0
+
+# Physical mount offset from the ArUco marker to the robot's real drive/rotation center.
+# These are robot-local offsets and DO rotate when the robot turns:
+#   forward_px = along robot forward
+#   right_px   = along robot right
+MARKER_TO_DRIVE_CENTER_FORWARD_PX = 0.0
+MARKER_TO_DRIVE_CENTER_RIGHT_PX = 0.0
+
+# Perspective correction caused by the marker being elevated above the ground.
+# These are IMAGE-SPACE corrections and do NOT rotate with the robot.
+# Tune these so the elevated marker projects down to the ground point under the marker.
+# Positive X gain moves the correction more right when the marker is right of image center.
+# Positive Y gain moves the correction more down when the marker is below image center.
+MARKER_PERSPECTIVE_X_GAIN = -88.0
+MARKER_PERSPECTIVE_Y_GAIN = -53.0
+
+# Backwards-compatible aliases used by ui.py debug text.
+MARKER_PERSPECTIVE_RIGHT_GAIN = MARKER_PERSPECTIVE_X_GAIN
+MARKER_PERSPECTIVE_FORWARD_GAIN = MARKER_PERSPECTIVE_Y_GAIN
+
+
+def normalize_angle_rad(angle: float) -> float:
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+def corrected_robot_pose_values(robot_pose, frame_width: int | None = None, frame_height: int | None = None):
+    corrected_heading = normalize_angle_rad(
+        robot_pose.heading_rad + math.radians(MARKER_HEADING_OFFSET_DEG)
+    )
+
+    # Robot-local unit vectors in image coordinates.
+    # These rotate with the ArUco/robot heading.
+    forward_x = math.cos(corrected_heading)
+    forward_y = math.sin(corrected_heading)
+    right_x = math.cos(corrected_heading + math.pi / 2.0)
+    right_y = math.sin(corrected_heading + math.pi / 2.0)
+
+    normalized_x = 0.0
+    normalized_y = 0.0
+
+    if frame_width is not None and frame_width > 0:
+        image_center_x = frame_width / 2.0
+        normalized_x = (float(robot_pose.x) - image_center_x) / image_center_x
+
+    if frame_height is not None and frame_height > 0:
+        image_center_y = frame_height / 2.0
+        normalized_y = (float(robot_pose.y) - image_center_y) / image_center_y
+
+    # 1) Perspective correction: image-space offset caused by marker height.
+    # This should NOT rotate with the robot. It only depends on where the elevated marker
+    # appears in the camera image.
+    perspective_offset_x = MARKER_PERSPECTIVE_X_GAIN * normalized_x
+    perspective_offset_y = MARKER_PERSPECTIVE_Y_GAIN * normalized_y
+
+    # 2) Physical mount correction: robot-local offset from marker to drive center.
+    # This DOES rotate with the robot.
+    mount_offset_x = (
+        MARKER_TO_DRIVE_CENTER_FORWARD_PX * forward_x
+        + MARKER_TO_DRIVE_CENTER_RIGHT_PX * right_x
+    )
+    mount_offset_y = (
+        MARKER_TO_DRIVE_CENTER_FORWARD_PX * forward_y
+        + MARKER_TO_DRIVE_CENTER_RIGHT_PX * right_y
+    )
+
+    # Final correction in image coordinates.
+    offset_x = perspective_offset_x + mount_offset_x
+    offset_y = perspective_offset_y + mount_offset_y
+
+    corrected_x = float(robot_pose.x) + offset_x
+    corrected_y = float(robot_pose.y) + offset_y
+
+    # For the UI: express the final image-space correction back in the robot-local axes.
+    # This is the part that will appear to "switch" when the robot turns 90 degrees.
+    used_forward_px = offset_x * forward_x + offset_y * forward_y
+    used_right_px = offset_x * right_x + offset_y * right_y
+
+    return (
+        corrected_x,
+        corrected_y,
+        corrected_heading,
+        used_forward_px,
+        used_right_px,
+        offset_x,
+        offset_y,
+        normalized_x,
+        normalized_y,
+    )
 
 def decide_immediate_command(context: NavigationContext, settings: Settings) -> NavigationResult:
     # FIXME - Acting on danger is a bit wonky
@@ -40,16 +134,20 @@ def decide_immediate_command(context: NavigationContext, settings: Settings) -> 
         return NavigationResult(CMD_STOP, "no_ball")
 
     if context.robot_pose is not None:
-        # setup vector from robot to target
-        dx = float(target_ball.x - context.robot_pose.x)
-        dy = float(target_ball.y - context.robot_pose.y)
+        frame_height = getattr(context, "frame_height", None)
+        robot_x, robot_y, robot_heading, *_ = corrected_robot_pose_values(
+            context.robot_pose,
+            frame_width=context.frame_width,
+            frame_height=frame_height,
+        )
+
+        # setup vector from corrected robot drive center to target
+        dx = float(target_ball.x - robot_x)
+        dy = float(target_ball.y - robot_y)
         target_heading = math.atan2(dy, dx)
 
         # Compute angle difference between robot and target
-        heading_error = math.atan2(
-            math.sin(target_heading - context.robot_pose.heading_rad),
-            math.cos(target_heading - context.robot_pose.heading_rad),
-        )
+        heading_error = normalize_angle_rad(target_heading - robot_heading)
         heading_error_deg = math.degrees(heading_error)
 
         # Compute distance from robot to target (straight line)

@@ -11,10 +11,11 @@ class Settings:
 
     min_ball_area: int = 140
     max_ball_area: int = 8000
-    min_ball_circularity: float = 0.65
+    min_ball_circularity: float = 0.0
     min_ball_radius: float = 10.0
-    max_ball_radius: float = 70.0
-    min_ball_confidence: float = 0.5
+    max_ball_radius: float = 20.0
+    min_ball_confidence: float = 0.4
+    white_sat_split: float = 80.0
 
     align_deadband_px: int = 35
     target_radius_px: float = 38.0
@@ -25,7 +26,7 @@ class Settings:
     danger_distance_px: float = 35.0
     danger_too_close_px: float = 35.0
     danger_rear_ignore_px: float = 35.0
-    pose_turn_deadband_deg: float = 12.0
+    pose_turn_deadband_deg: float = 8.0
     pose_arrival_distance_px: float = 110.0
 
 
@@ -36,8 +37,15 @@ class HSVRange:
     upper: tuple[int, int, int]
 
 
-ORANGE_RANGE = HSVRange((11, 100, 210), (19, 255, 255))
-WHITE_RANGE = HSVRange((0, 0, 189), (179, 22, 255))
+@dataclass
+class BallDetectionTuning:
+    orange_range: HSVRange
+    white_range: HSVRange
+    white_sat_split: float
+
+
+ORANGE_RANGE = HSVRange((0, 191, 204), (179, 255, 255))
+WHITE_RANGE = HSVRange((0, 0, 213), (64, 107, 255))
 RED_RANGE_1 = HSVRange((0, 95, 60), (10, 255, 255))
 RED_RANGE_2 = HSVRange((165, 95, 60), (179, 255, 255))
 
