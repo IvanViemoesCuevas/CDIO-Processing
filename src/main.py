@@ -81,6 +81,12 @@ def main() -> int:
 
     try:
         while True:
+            #image_path = "Test_Image.png"  # Change this to your image path
+            #frame = cv.imread(image_path)
+            #if frame is None:
+            #    print(f"Error reading image from {image_path}")
+            #    break
+
             ok, frame = cap0.read()
             if not ok:
                 print("Error reading frame")
@@ -179,7 +185,9 @@ def main() -> int:
                 command=command,
                 reason=reason,
                 last_sent_command=last_send_command,
-                # FIXME - Doesn't draw danger zones currently, but they are there otherwise
+                danger=danger,
+                danger_state=danger_state,
+                danger_contours=danger_contours,
             )
             cv.imshow("Golfbot", display)
 
@@ -202,7 +210,7 @@ def main() -> int:
                 break
 
     finally:
-        cap0.release()
+        cap0.release()  # Uncomment if using video capture
         if client is not None:
             client.send_char(CMD_QUIT)
             client.close()

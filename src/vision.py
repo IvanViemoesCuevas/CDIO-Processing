@@ -18,7 +18,7 @@ from models import *
 
 # Path to your custom YOLO model. Replace this placeholder with your model path.
 # Set to None to disable YOLO and always use the contour fallback.
-YOLO_MODEL_PATH = "custom_yolo.pt"
+YOLO_MODEL_PATH = "my_model.pt"
 
 # Lazily-loaded YOLO model instance
 _yolo_model = None

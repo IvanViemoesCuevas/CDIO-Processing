@@ -19,9 +19,6 @@ from navigation import (
     MARKER_PERSPECTIVE_RIGHT_GAIN,
 )
 
-
-# corrected_robot_pose_values and normalize_angle_rad are imported from navigation.py
-
 def draw_robot_footprint(frame: np.ndarray, robot_pose: RobotPose, length_px: float, width_px: float) -> None:
     length = max(10.0, float(length_px))
     width = max(10.0, float(width_px))
@@ -30,7 +27,6 @@ def draw_robot_footprint(frame: np.ndarray, robot_pose: RobotPose, length_px: fl
     box = cv.boxPoints(rect).astype(np.int32)
     cv.polylines(frame, [box], True, (0, 255, 255), 2)
 
-# FIXME - Doesn't draw danger zones, but they are there otherwise
 def annotate(
         frame: np.ndarray,
         command: str,
@@ -39,10 +35,14 @@ def annotate(
         balls: list[BallDetection],
         target_ball: Optional[BallDetection],
         robot_pose: Optional[RobotPose],
-        #settings: Optional[Settings] = None,
+        danger: Optional[DangerFlags] = None,
+        danger_state: Optional[DangerState] = None,
+        danger_contours: Optional[list] = None,
 ) -> np.ndarray:
     out = frame.copy()
 
+    """
+    
     # Mark the detected balls
     for b in balls:
         ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
@@ -70,6 +70,8 @@ def annotate(
             color,
             2,
         )
+        
+    """
 
     # Mark robot and navigation debug info
     debug_lines: list[str] = []
@@ -169,6 +171,32 @@ def annotate(
             debug_lines.append(f"target=({target_ball.x},{target_ball.y}) center_x={center_x} error_x={error_x}")
             #if settings is not None:
             #    debug_lines.append(f"align_deadband={settings.align_deadband_px}px target_radius={settings.target_radius_px}px")
+
+    # Draw danger zones
+    if danger_contours is not None:
+        cv.drawContours(out, danger_contours, -1, (0, 0, 255), 2)
+
+    if danger is not None:
+        danger_status = []
+        if danger.front:
+            danger_status.append("FRONT")
+        if danger.back:
+            danger_status.append("BACK")
+        if danger.left:
+            danger_status.append("LEFT")
+        if danger.center:
+            danger_status.append("CENTER")
+        if danger.right:
+            danger_status.append("RIGHT")
+
+        if danger_status:
+            status_text = "DANGER: " + " | ".join(danger_status)
+            cv.putText(out, status_text, (10, out.shape[0] - 40), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+    if danger_state is not None and danger_state.nearest_point is not None:
+        cv.circle(out, danger_state.nearest_point, 5, (0, 165, 255), -1)
+        danger_text = f"nearest_danger={danger_state.nearest_distance_px:.1f}px"
+        cv.putText(out, danger_text, (10, out.shape[0] - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
     # Add the command info to the screen
     cv.putText(out, f"cmd={command} reason={reason}", (10, 56), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
