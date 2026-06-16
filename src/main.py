@@ -81,7 +81,8 @@ def main() -> int:
     cached_small_goal: Optional[GoalDetection] = None
 
     # Setup handoff manager
-    handoff_manager = BallHandoffManager(required_empty_frames=11)
+    # Handoff triggers when field is empty (no balls for N frames)
+    handoff_manager = BallHandoffManager(required_empty_frames=2)
     # Handoff mode state
     handoff_mode = False
     handoff_goal_target: Optional[BallDetection] = None
@@ -138,7 +139,7 @@ def main() -> int:
             # Update handoff manager and check for handoff condition
             handoff_manager.update(balls)
             if handoff_manager.ready_for_handoff:
-                print(f"✅ READY FOR HANDOFF: Field clear={handoff_manager.field_is_clear()}, Collected={handoff_manager.collected_balls_count}/{handoff_manager.required_collected_balls}, Empty frames={handoff_manager.empty_frames_count}/{handoff_manager.required_empty_frames}")
+                print(f"✅ READY FOR HANDOFF: Field is clear! Empty frames={handoff_manager.empty_frames_count}/{handoff_manager.required_empty_frames}")
                 # Enter handoff mode: locate the small goal (use vision helper) and create a fake
                 # BallDetection target so the existing navigation logic can drive the robot there.
                 detected_goal = None
@@ -175,12 +176,11 @@ def main() -> int:
                 else:
                     print("Could not localize small goal for handoff; aborting handoff")
 
-                # Reset the field/collected counters so the next cycle can begin after handoff
-                handoff_manager.reset_collected_count()
+                # Reset the field counter so next cycle can begin
                 handoff_manager.reset()
             else:
                 # Debug: Show current state
-                print(f"Handoff status: Field={len(balls)} balls (need 0), Collected={handoff_manager.collected_balls_count}/{handoff_manager.required_collected_balls}, Empty frames={handoff_manager.empty_frames_count}/{handoff_manager.required_empty_frames}")
+                print(f"Handoff status: {len(balls)} balls on field, Empty frames={handoff_manager.empty_frames_count}/{handoff_manager.required_empty_frames}")
 
             # Choose target
             now = time.monotonic()
@@ -214,6 +214,7 @@ def main() -> int:
                 nav_state.last_target_seen_time = now
             elif not commit_active:
                 nav_state.candidate_target = None
+
 
             decision, nav_state = decide_command(
                 context=NavigationContext(

@@ -149,24 +149,16 @@ class BallDetectionTuner:
 
 class BallHandoffManager:
     """
-    Manages the state for ball handoff by tracking:
-    1. When the field is clear of balls (consecutive empty frames)
-    2. How many balls the robot has collected
-    
-    Ready for handoff only when BOTH conditions are met:
-    - Field is empty (0 balls detected for N consecutive frames)
-    - Robot has collected >= required_collected_balls
+    Manages the state for ball handoff by tracking when the field is clear of balls.
+    Ready for handoff when field is empty (0 balls detected for N consecutive frames).
     """
-    def __init__(self, required_empty_frames: int = 1, required_collected_balls: int = 1):
+    def __init__(self, required_empty_frames: int = 1):
         """
         Initializes the manager.
         :param required_empty_frames: Consecutive frames without balls before field considered empty.
-        :param required_collected_balls: Minimum balls robot must collect before handoff allowed.
         """
         self.required_empty_frames = required_empty_frames
-        self.required_collected_balls = required_collected_balls
         self._empty_frame_counter = 0
-        self._collected_balls_count = 0
 
     def update(self, balls: list[BallDetection]) -> None:
         """
@@ -179,36 +171,19 @@ class BallHandoffManager:
         else:
             self._empty_frame_counter = 0
 
-    def add_collected_ball(self) -> None:
-        """Increment the count of balls the robot has collected."""
-        self._collected_balls_count += 1
-
     def field_is_clear(self) -> bool:
         """
         :return: True if field is empty (sufficient consecutive empty frames detected).
         """
         return self._empty_frame_counter >= self.required_empty_frames
 
-    def robot_has_collected_enough(self) -> bool:
-        """
-        :return: True if robot has collected >= required_collected_balls.
-        """
-        return self._collected_balls_count >= self.required_collected_balls
-
     @property
     def ready_for_handoff(self) -> bool:
         """
-        Dual-condition check: ready only if BOTH field is clear AND robot collected enough balls.
-        :return: True if both conditions are met, False otherwise.
+        Check if field is clear and ready for handoff.
+        :return: True if field is empty for required frames, False otherwise.
         """
-        return self.field_is_clear() and self.robot_has_collected_enough()
-
-    @property
-    def collected_balls_count(self) -> int:
-        """
-        :return: Number of balls the robot has collected.
-        """
-        return self._collected_balls_count
+        return self.field_is_clear()
 
     @property
     def empty_frames_count(self) -> int:
@@ -218,12 +193,9 @@ class BallHandoffManager:
         return self._empty_frame_counter
 
     def reset(self) -> None:
-        """Resets only the field-empty counter (does NOT reset collected balls count)."""
+        """Resets the field-empty counter."""
         self._empty_frame_counter = 0
 
-    def reset_collected_count(self) -> None:
-        """Resets the collected balls count (after handoff)."""
-        self._collected_balls_count = 0
 
 
 def make_ball_debug_view(

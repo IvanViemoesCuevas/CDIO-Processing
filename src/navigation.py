@@ -205,14 +205,23 @@ def apply_commit_transitions(
     # When the robot reaches a target, it stores that ball as committed and changes command to forward.
     # This helps when the ball disappears under/behind the robot due to camera angle.
     if result.reason.endswith(":arrived") and context.target_ball is not None:
-        # Track that robot collected a ball
-        if context.handoff_manager is not None:
-            context.handoff_manager.add_collected_ball()
         next_state.candidate_target = context.target_ball
         return NavigationResult(CMD_FORWARD, f"commit:{result.reason}"), next_state
 
-    # If there is no committed target, or it is not yet time to recompute, keep result.
-    if next_state.candidate_target is None or not (next_state.hold_command_until < context.now):
+    # If there is no committed target, return.
+    if next_state.candidate_target is None:
+        return result, next_state
+
+    # Check if committed target has disappeared (may indicate ball was collected under/behind robot)
+    # Do this check even within the hold window
+    if context.target_ball is None and context.balls_count == 0 and context.now <= next_state.hold_command_until:
+        # We had a target, it's gone, and we're in commit window -> likely collected!
+        # Mark that we've handled the collection
+        next_state.hold_command_until = context.now
+        return NavigationResult(CMD_FORWARD, f"commit:ball_disappeared"), next_state
+
+    # If not yet time to recompute, keep result.
+    if not (next_state.hold_command_until < context.now):
         return result, next_state
 
     # Recompute: Define “continue-forward-until” based on last target seen time + configured window.
