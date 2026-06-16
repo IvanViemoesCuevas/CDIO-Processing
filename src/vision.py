@@ -157,7 +157,7 @@ class BallHandoffManager:
     - Field is empty (0 balls detected for N consecutive frames)
     - Robot has collected >= required_collected_balls
     """
-    def __init__(self, required_empty_frames: int = 11, required_collected_balls: int = 11):
+    def __init__(self, required_empty_frames: int = 1, required_collected_balls: int = 1):
         """
         Initializes the manager.
         :param required_empty_frames: Consecutive frames without balls before field considered empty.

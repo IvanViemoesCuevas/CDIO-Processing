@@ -5,10 +5,10 @@ from typing import Optional
 
 from config import *
 from robot_client import RobotClient
-from src.models import NavigationContext, NavigationState, GoalDetection, BallDetection
-from src.navigation import decide_command
-from src.ui import annotate
-from src.vision import (
+from models import NavigationContext, NavigationState, GoalDetection, BallDetection
+from navigation import decide_command
+from ui import annotate
+from vision import (
     BallDetectionTuner,
     BallHandoffManager,
     choose_target_ball,
@@ -294,9 +294,6 @@ def main() -> int:
                 command=command,
                 reason=reason,
                 last_sent_command=last_send_command,
-                balls=balls,
-                target_ball=target_ball,
-                robot_pose=robot_pose,
                 danger=danger,
                 danger_state=danger_state,
                 danger_contours=danger_contours,
