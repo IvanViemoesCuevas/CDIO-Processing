@@ -5,7 +5,7 @@ from typing import Optional
 
 from config import *
 from robot_client import RobotClient
-from src.models import NavigationContext, NavigationState, GoalDetection
+from src.models import NavigationContext, NavigationState, GoalDetection, BallDetection
 from src.navigation import decide_command
 from src.ui import annotate
 from src.vision import (
@@ -82,6 +82,11 @@ def main() -> int:
 
     # Setup handoff manager
     handoff_manager = BallHandoffManager(required_empty_frames=11)
+    # Handoff mode state
+    handoff_mode = False
+    handoff_goal_target: Optional[BallDetection] = None
+    handoff_arrived_counter = 0
+    handoff_outloaded = False
 
     try:
         while True:
@@ -134,12 +139,43 @@ def main() -> int:
             handoff_manager.update(balls)
             if handoff_manager.ready_for_handoff:
                 print(f"✅ READY FOR HANDOFF: Field clear={handoff_manager.field_is_clear()}, Collected={handoff_manager.collected_balls_count}/{handoff_manager.required_collected_balls}, Empty frames={handoff_manager.empty_frames_count}/{handoff_manager.required_empty_frames}")
-                # TODO: Implement actual handoff logic here.
-                # For example, send a specific command to the robot.
-                # if client is not None:
-                #     client.send_char(CMD_HANDOFF) # Assuming CMD_HANDOFF exists
+                # Enter handoff mode: locate the small goal (use vision helper) and create a fake
+                # BallDetection target so the existing navigation logic can drive the robot there.
+                detected_goal = None
+                try:
+                    # Prefer using the more robust scan for the goal
+                    detected_goal = find_small_goal(frame, field_corners, settings)
+                except Exception as e:
+                    print(f"Error while running find_small_goal: {e}")
 
-                # Reset the manager to prepare for next cycle
+                if detected_goal is None and cached_small_goal is not None:
+                    # Fall back to cached geometry if the scan fails
+                    detected_goal = cached_small_goal
+
+                if detected_goal is not None:
+                    # Compute delivery x using configured offset (inside the field)
+                    delivery_x = (
+                        detected_goal.delivery_x
+                        if getattr(detected_goal, "delivery_x", None) is not None
+                        else int(detected_goal.x - settings.delivery_point_offset_px)
+                    )
+
+                    # Create a fake BallDetection at the delivery point so navigation will aim there
+                    handoff_goal_target = BallDetection(
+                        x=int(delivery_x),
+                        y=int(detected_goal.y),
+                        radius=45.0,
+                        color_name="goal",
+                        confidence=1.0,
+                    )
+                    handoff_mode = True
+                    handoff_arrived_counter = 0
+                    handoff_outloaded = False
+                    print(f"Starting handoff -> driving to delivery point ({handoff_goal_target.x},{handoff_goal_target.y})")
+                else:
+                    print("Could not localize small goal for handoff; aborting handoff")
+
+                # Reset the field/collected counters so the next cycle can begin after handoff
                 handoff_manager.reset_collected_count()
                 handoff_manager.reset()
             else:
@@ -156,7 +192,12 @@ def main() -> int:
                 else None
             )
 
-            if nav_state.candidate_target is not None:
+            # If in handoff_mode, force the navigation target to the handoff delivery point
+            if handoff_mode and handoff_goal_target is not None:
+                target_ball = handoff_goal_target
+                # keep candidate target so commit logic still works
+                nav_state.candidate_target = handoff_goal_target
+            elif nav_state.candidate_target is not None:
                 if matched_candidate is not None:
                     target_ball = matched_candidate
                 elif commit_active:
@@ -191,6 +232,38 @@ def main() -> int:
             )
             command = decision.command
             reason = decision.reason
+
+            # Handoff arrival detection and outload sequence
+            if handoff_mode and handoff_goal_target is not None:
+                # Consider arrived when navigation reports an "arrived" reason (stable over frames)
+                if "arrived" in reason:
+                    handoff_arrived_counter += 1
+                else:
+                    handoff_arrived_counter = 0
+
+                # If arrived for several consecutive frames, perform outload
+                if handoff_arrived_counter >= settings.stable_frames_required and not handoff_outloaded:
+                    print("Handoff: arrived at delivery point — performing outload sequence")
+                    # Simple outload: nudges to push balls into the goal by briefly driving forward then stopping
+                    if client is not None:
+                        try:
+                            # A short burst forward then stop; repeat a few times
+                            for _ in range(3):
+                                client.send_char(CMD_FORWARD)
+                                time.sleep(settings.send_interval_sec * 4)
+                                client.send_char(CMD_STOP)
+                                time.sleep(settings.send_interval_sec * 4)
+                        except Exception as e:
+                            print(f"Error sending outload commands: {e}")
+                    else:
+                        print("Dry-run: would send forward/stop pulses to outload balls")
+
+                    handoff_outloaded = True
+                    # Exit handoff mode after outloading
+                    handoff_mode = False
+                    handoff_goal_target = None
+                    handoff_arrived_counter = 0
+                    print("Handoff: completed and exiting handoff mode")
 
             if command == candidate_command:
                 candidate_count += 1
