@@ -10,6 +10,7 @@ from src.navigation import decide_command
 from src.ui import annotate
 from src.vision import (
     BallDetectionTuner,
+    BallHandoffManager,
     choose_target_ball,
     detect_balls,
     detect_danger_zones,
@@ -23,7 +24,7 @@ from src.vision import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="172.20.10.2", help="Robot IP/hostname")
+    parser.add_argument("--host", default="172.20.10.9", help="Robot IP/hostname")
     parser.add_argument("--port", type=int, default=12345, help="Robot TCP port")
     parser.add_argument("--dry-run", action="store_true", help="Do not open socket; only print decisions")
     parser.add_argument(
@@ -43,7 +44,7 @@ def main() -> int:
     )
 
     # Get the video capture
-    cap0 = cv.VideoCapture(0)
+    cap0 = cv.VideoCapture(0, cv.CAP_DSHOW)
     if not cap0.isOpened():
         print("Error opening video stream 0")
         return 1
@@ -75,9 +76,12 @@ def main() -> int:
 
     # Setup navigation state variables
     nav_state = NavigationState()
-    
+
     # Cache for the small goal
     cached_small_goal: Optional[GoalDetection] = None
+
+    # Setup handoff manager
+    handoff_manager = BallHandoffManager(required_empty_frames=11)
 
     try:
         while True:
@@ -87,7 +91,7 @@ def main() -> int:
                 break
 
             # --- Vision Pipeline ---
-            
+
             # 1. Detect field corners (existing logic for green overlay)
             field_corners = detect_field_corners(frame, settings)
 
@@ -95,21 +99,21 @@ def main() -> int:
             if cached_small_goal is None and field_corners is not None:
                 tr = field_corners.topRight
                 br = field_corners.bottomRight
-                
+
                 # Calculate middle of the right edge
                 goal_x = int((tr[0] + br[0]) / 2)
                 goal_y = int((tr[1] + br[1]) / 2)
-                
+
                 # Calculate delivery point (80 pixels inside)
                 delivery_x = goal_x - 80
-                
+
                 cached_small_goal = GoalDetection(
                     x=goal_x,
                     y=goal_y,
                     size_category="small"
                 )
                 cached_small_goal.delivery_x = delivery_x
-                
+
                 print(f"Small Goal calculated and cached at: ({cached_small_goal.x}, {cached_small_goal.y})")
                 print(f"Delivery point for EV3: ({cached_small_goal.delivery_x}, {cached_small_goal.y})")
 
@@ -126,7 +130,23 @@ def main() -> int:
             )
             danger, danger_state, _, danger_contours = detect_danger_zones(frame, settings, robot_pose)
 
-            # --- Navigation Logic (unchanged) ---
+            # Update handoff manager and check for handoff condition
+            handoff_manager.update(balls)
+            if handoff_manager.ready_for_handoff:
+                print(f"✅ READY FOR HANDOFF: Field clear={handoff_manager.field_is_clear()}, Collected={handoff_manager.collected_balls_count}/{handoff_manager.required_collected_balls}, Empty frames={handoff_manager.empty_frames_count}/{handoff_manager.required_empty_frames}")
+                # TODO: Implement actual handoff logic here.
+                # For example, send a specific command to the robot.
+                # if client is not None:
+                #     client.send_char(CMD_HANDOFF) # Assuming CMD_HANDOFF exists
+
+                # Reset the manager to prepare for next cycle
+                handoff_manager.reset_collected_count()
+                handoff_manager.reset()
+            else:
+                # Debug: Show current state
+                print(f"Handoff status: Field={len(balls)} balls (need 0), Collected={handoff_manager.collected_balls_count}/{handoff_manager.required_collected_balls}, Empty frames={handoff_manager.empty_frames_count}/{handoff_manager.required_empty_frames}")
+
+            # Choose target
             now = time.monotonic()
             commit_active = now < nav_state.hold_command_until
             sample_ball = choose_target_ball(balls, robot_pose)
@@ -164,6 +184,7 @@ def main() -> int:
                     now=now,
                     balls_count=len(balls),
                     candidate_target_visible=matched_candidate is not None,
+                    handoff_manager=handoff_manager,
                 ),
                 state=nav_state,
                 settings=settings,
@@ -194,6 +215,9 @@ def main() -> int:
             # --- Annotation and Display ---
             display = annotate(
                 frame=frame,
+                robot_pose=robot_pose,
+                balls=balls,
+                target_ball=target_ball,
                 command=command,
                 reason=reason,
                 last_sent_command=last_send_command,

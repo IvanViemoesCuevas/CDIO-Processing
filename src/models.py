@@ -1,6 +1,9 @@
 # Only dataclasses
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vision import BallHandoffManager
 
 @dataclass
 class BallDetection:
@@ -48,6 +51,7 @@ class NavigationContext:
     now: float
     balls_count: int
     candidate_target_visible: bool
+    handoff_manager: Optional["BallHandoffManager"] = None
 
 
 @dataclass
