@@ -16,6 +16,7 @@ from src.vision import (
     detect_robot_pose,
     make_ball_debug_view,
     match_candidate_target,
+    detect_goals,
 )
 
 
@@ -45,11 +46,6 @@ def main() -> int:
     if not cap0.isOpened():
         print("Error opening video stream 0")
         return 1
-
-    #cap1 = cv.VideoCapture(1)
-    #if not cap1.isOpened():
-    #    print("Error opening video stream 1")
-    #    return 1
 
     # Connect to the client
     client: Optional[RobotClient] = None
@@ -81,12 +77,6 @@ def main() -> int:
 
     try:
         while True:
-            #image_path = "Test_Image.png"  # Change this to your image path
-            #frame = cv.imread(image_path)
-            #if frame is None:
-            #    print(f"Error reading image from {image_path}")
-            #    break
-
             ok, frame = cap0.read()
             if not ok:
                 print("Error reading frame")
@@ -137,6 +127,9 @@ def main() -> int:
             # Detect danger zones
             danger, danger_state, edges, danger_contours = detect_danger_zones(frame, settings, robot_pose)
 
+            # Detect goals and field corners
+            left_goal, right_goal, field_corners = detect_goals(frame, settings)
+
             # Decide command
             decision, nav_state = decide_command(
                 context=NavigationContext(
@@ -162,11 +155,10 @@ def main() -> int:
                 candidate_count = 1
 
             # Decide whether to send command
-            now = time.time()
+            now_time = time.time()
             should_send = (
                 candidate_count >= settings.stable_frames_required
-                #and candidate_command != last_send_command
-                and now - last_send_time >= settings.send_interval_sec
+                and now_time - last_send_time >= settings.send_interval_sec
             )
 
             if should_send and candidate_command is not None:
@@ -174,7 +166,7 @@ def main() -> int:
                     client.send_char(candidate_command)
                 print(f"sent={candidate_command} reason={reason}")
                 last_send_command = candidate_command
-                last_send_time = now
+                last_send_time = now_time
 
             # Annotate frame with detections and command
             display = annotate(
@@ -188,6 +180,9 @@ def main() -> int:
                 danger=danger,
                 danger_state=danger_state,
                 danger_contours=danger_contours,
+                left_goal=left_goal,
+                right_goal=right_goal,
+                field_corners=field_corners,
             )
             cv.imshow("Golfbot", display)
 
@@ -210,7 +205,7 @@ def main() -> int:
                 break
 
     finally:
-        cap0.release()  # Uncomment if using video capture
+        cap0.release()
         if client is not None:
             client.send_char(CMD_QUIT)
             client.close()

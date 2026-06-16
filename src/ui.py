@@ -5,6 +5,7 @@ import numpy as np
 import cv2 as cv
 
 from models import *
+from typing import Optional
 
 ROBOT_LENGTH_PX = 170
 ROBOT_WIDTH_PX = 80
@@ -38,6 +39,9 @@ def annotate(
         danger: Optional[DangerFlags] = None,
         danger_state: Optional[DangerState] = None,
         danger_contours: Optional[list] = None,
+        left_goal: Optional[GoalDetection] = None,
+        right_goal: Optional[GoalDetection] = None,
+        field_corners: Optional[FieldCorners] = None,
 ) -> np.ndarray:
     out = frame.copy()
 
@@ -72,6 +76,35 @@ def annotate(
         )
         
     """
+
+    # Mark field corners and goals
+    if field_corners is not None:
+        corners_list = [
+            field_corners.topLeft,
+            field_corners.topRight,
+            field_corners.bottomRight, # Note: ordering for polylines drawing
+            field_corners.bottomLeft
+        ]
+        # Draw field boundary
+        pts = np.array(corners_list, np.int32)
+        pts = pts.reshape((-1, 1, 2))
+        cv.polylines(out, [pts], True, (0, 255, 0), 2)
+        
+        # Draw corners
+        for i, pt in enumerate(corners_list):
+            cv.circle(out, pt, 5, (0, 255, 0), -1)
+            cv.putText(out, f"C{i+1}", (pt[0]+10, pt[1]+10), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    if left_goal is not None:
+        cv.circle(out, (left_goal.x, left_goal.y), 15, (255, 100, 100), 3)
+        cv.circle(out, (left_goal.x, left_goal.y), 4, (255, 100, 100), -1)
+        cv.putText(out, "Left Goal", (left_goal.x + 20, left_goal.y), cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 100), 2)
+
+    if right_goal is not None:
+        cv.circle(out, (right_goal.x, right_goal.y), 15, (100, 100, 255), 3)
+        cv.circle(out, (right_goal.x, right_goal.y), 4, (100, 100, 255), -1)
+        cv.putText(out, "Right Goal", (right_goal.x - 100, right_goal.y), cv.FONT_HERSHEY_SIMPLEX, 0.6, (100, 100, 255), 2)
+
 
     # Mark robot and navigation debug info
     debug_lines: list[str] = []

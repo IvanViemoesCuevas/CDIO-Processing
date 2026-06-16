@@ -61,3 +61,21 @@ class NavigationState:
 class NavigationResult:
     command: str
     reason: str
+
+
+@dataclass
+class GoalDetection:
+    """Represents a detected goal with position and size information."""
+    x: int
+    y: int
+    size_category: str  # "large" for left goal, "small" for right goal
+    confidence: float = 1.0  # Geometry-based, should be high
+
+
+@dataclass
+class FieldCorners:
+    """Represents the four corners of the golf field/court."""
+    topLeft: tuple[int, int]
+    topRight: tuple[int, int]
+    bottomLeft: tuple[int, int]
+    bottomRight: tuple[int, int]

@@ -486,3 +486,133 @@ def detect_danger_zones(
         flags.right = bool(np.any(xs >= zone_w * 2))
 
     return flags, state, filtered_mask, kept_contours
+
+
+def detect_field_corners(frame: np.ndarray, settings: Settings) -> Optional[FieldCorners]:
+    """
+    Detect the four corners of the red golf field.
+    Uses contour detection on the red color range.
+
+    Returns FieldCorners with topLeft, topRight, bottomLeft, bottomRight,
+    or None if detection fails.
+    """
+    hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+
+    # Build red mask (same as danger zones use)
+    red1 = cv.inRange(hsv_frame, RED_RANGE_1.lower, RED_RANGE_1.upper)
+    red2 = cv.inRange(hsv_frame, RED_RANGE_2.lower, RED_RANGE_2.upper)
+    mask = cv.bitwise_or(red1, red2)
+
+    # Apply morphology to clean up the mask
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
+    mask = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)
+
+    # Find contours
+    contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        return None
+
+    # Find the largest contour (should be the field boundary)
+    largest_contour = max(contours, key=cv.contourArea)
+
+    # Approximate the contour to a polygon (should be roughly rectangular)
+    epsilon = 0.02 * cv.arcLength(largest_contour, True)
+    approx = cv.approxPolyDP(largest_contour, epsilon, True)
+
+    # We expect 4 corners for a rectangular field
+    if len(approx) != 4:
+        return None
+
+    # Extract the four corners and sort them
+    corners = approx.reshape(4, 2).astype(np.int32)
+
+    # Sort corners: top-left, top-right, bottom-left, bottom-right
+    # First, separate by y-coordinate (top vs bottom)
+    top_corners = sorted(corners, key=lambda p: p[1])[:2]
+    bottom_corners = sorted(corners, key=lambda p: p[1])[2:]
+
+    # Sort each pair by x-coordinate
+    top_corners = sorted(top_corners, key=lambda p: p[0])
+    bottom_corners = sorted(bottom_corners, key=lambda p: p[0])
+
+    topLeft = tuple(top_corners[0])
+    topRight = tuple(top_corners[1])
+    bottomLeft = tuple(bottom_corners[0])
+    bottomRight = tuple(bottom_corners[1])
+
+    return FieldCorners(
+        topLeft=topLeft,
+        topRight=topRight,
+        bottomLeft=bottomLeft,
+        bottomRight=bottomRight,
+    )
+
+
+def calculate_goal_positions(field_corners: FieldCorners) -> tuple[Optional[GoalDetection], Optional[GoalDetection]]:
+    """
+    Calculate goal positions based on field geometry.
+
+    The golf field has two goals on the vertical sides:
+    - Left goal (large) at the midpoint of the left edge
+    - Right goal (small) at the midpoint of the right edge
+
+    Args:
+        field_corners: The four corners of the field
+
+    Returns:
+        Tuple of (left_goal, right_goal) - both GoalDetection objects or None if calculation fails
+    """
+    try:
+        # Extract corner coordinates
+        tl = field_corners.topLeft
+        tr = field_corners.topRight
+        bl = field_corners.bottomLeft
+        br = field_corners.bottomRight
+
+        # Calculate left goal position (midpoint of left edge)
+        left_goal_x = int((tl[0] + bl[0]) / 2.0)
+        left_goal_y = int((tl[1] + bl[1]) / 2.0)
+
+        # Calculate right goal position (midpoint of right edge)
+        right_goal_x = int((tr[0] + br[0]) / 2.0)
+        right_goal_y = int((tr[1] + br[1]) / 2.0)
+
+        left_goal = GoalDetection(
+            x=left_goal_x,
+            y=left_goal_y,
+            size_category="large",
+            confidence=1.0
+        )
+
+        right_goal = GoalDetection(
+            x=right_goal_x,
+            y=right_goal_y,
+            size_category="small",
+            confidence=1.0
+        )
+
+        return left_goal, right_goal
+
+    except Exception as e:
+        print(f"Error calculating goal positions: {e}")
+        return None, None
+
+
+def detect_goals(frame: np.ndarray, settings: Settings) -> tuple[Optional[GoalDetection], Optional[GoalDetection], Optional[FieldCorners]]:
+    """
+    Detect goal positions by calculating from field geometry.
+
+    Returns:
+        Tuple of (left_goal, right_goal, field_corners)
+        Goals are None if field corners cannot be detected.
+    """
+    field_corners = detect_field_corners(frame, settings)
+
+    if field_corners is None:
+        return None, None, None
+
+    left_goal, right_goal = calculate_goal_positions(field_corners)
+
+    return left_goal, right_goal, field_corners
