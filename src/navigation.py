@@ -205,6 +205,9 @@ def apply_commit_transitions(
     # When the robot reaches a target, it stores that ball as committed and changes command to forward.
     # This helps when the ball disappears under/behind the robot due to camera angle.
     if result.reason.endswith(":arrived") and context.target_ball is not None:
+        # Track that robot collected a ball
+        if context.handoff_manager is not None:
+            context.handoff_manager.add_collected_ball()
         next_state.candidate_target = context.target_ball
         return NavigationResult(CMD_FORWARD, f"commit:{result.reason}"), next_state
 
