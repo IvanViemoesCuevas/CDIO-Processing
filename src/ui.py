@@ -19,11 +19,11 @@ from navigation import (
     MARKER_PERSPECTIVE_RIGHT_GAIN,
 )
 
-def draw_robot_footprint(frame: np.ndarray, robot_pose: RobotPose, length_px: float, width_px: float) -> None:
+def draw_robot_footprint(frame: np.ndarray, x: float, y: float, heading_rad: float, length_px: float, width_px: float) -> None:
     length = max(10.0, float(length_px))
     width = max(10.0, float(width_px))
-    angle_deg = math.degrees(robot_pose.heading_rad)
-    rect = ((float(robot_pose.x), float(robot_pose.y)), (length, width), angle_deg)
+    angle_deg = math.degrees(heading_rad)
+    rect = ((float(x), float(y)), (length, width), angle_deg)
     box = cv.boxPoints(rect).astype(np.int32)
     cv.polylines(frame, [box], True, (0, 255, 255), 2)
 
@@ -40,8 +40,6 @@ def annotate(
         danger_contours: Optional[list] = None,
 ) -> np.ndarray:
     out = frame.copy()
-
-    """
     
     # Mark the detected balls
     for b in balls:
@@ -70,23 +68,12 @@ def annotate(
             color,
             2,
         )
-        
-    """
+
 
     # Mark robot and navigation debug info
     debug_lines: list[str] = []
     if robot_pose is not None:
-        draw_robot_footprint(out, robot_pose, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
-        cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
-        marker_point = (robot_pose.x, robot_pose.y)
-
-        arrow_len = 45
-        heading_x = math.cos(robot_pose.heading_rad)
-        heading_y = math.sin(robot_pose.heading_rad)
-        x2 = int(robot_pose.x + arrow_len * heading_x)
-        y2 = int(robot_pose.y + arrow_len * heading_y)
-        cv.arrowedLine(out, (robot_pose.x, robot_pose.y), (x2, y2), (0, 255, 0), 2, tipLength=0.25)
-        cv.putText(out, "robot", (robot_pose.x + 10, robot_pose.y - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        # ...existing code...
 
         # Draw corrected drive center and heading
         (
@@ -106,10 +93,24 @@ def annotate(
         )
         robot_point = (int(round(robot_x)), int(round(robot_y)))
 
+        # Draw robot footprint at corrected location and heading
+        draw_robot_footprint(out, robot_x, robot_y, robot_heading, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
+
+        # Draw marker point and correction line
+        cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
+        marker_point = (robot_pose.x, robot_pose.y)
+
+        arrow_len = 45
+        heading_x = math.cos(robot_pose.heading_rad)
+        heading_y = math.sin(robot_pose.heading_rad)
+        x2 = int(robot_pose.x + arrow_len * heading_x)
+        y2 = int(robot_pose.y + arrow_len * heading_y)
+        cv.arrowedLine(out, (robot_pose.x, robot_pose.y), (x2, y2), (0, 255, 0), 2, tipLength=0.25)
+
         cv.line(out, marker_point, robot_point, (255, 255, 0), 2)
         cv.circle(out, robot_point, 7, (255, 255, 0), -1)
-        cv.putText(out, "raw marker", (marker_point[0] + 10, marker_point[1] + 16), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        cv.putText(out, "corrected ground point", (robot_point[0] + 10, robot_point[1] + 16), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+        #cv.putText(out, "raw marker", (marker_point[0] + 10, marker_point[1] + 16), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        #cv.putText(out, "corrected ground point", (robot_point[0] + 10, robot_point[1] + 16), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
 
         # Draw the robot-local axes used for the correction.
         # Blue = robot-local forward, red = robot-local right.
@@ -124,8 +125,8 @@ def annotate(
         )
         cv.arrowedLine(out, marker_point, local_forward_end, (255, 0, 0), 2, tipLength=0.25)
         cv.arrowedLine(out, marker_point, local_right_end, (0, 0, 255), 2, tipLength=0.25)
-        cv.putText(out, "local forward", (local_forward_end[0] + 5, local_forward_end[1]), cv.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 0), 2)
-        cv.putText(out, "local right", (local_right_end[0] + 5, local_right_end[1]), cv.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 2)
+        #cv.putText(out, "local forward", (local_forward_end[0] + 5, local_forward_end[1]), cv.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 0), 2)
+        #cv.putText(out, "local right", (local_right_end[0] + 5, local_right_end[1]), cv.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 2)
 
         heading_deg = math.degrees(robot_pose.heading_rad)
         corrected_heading_deg = math.degrees(robot_heading)
@@ -159,8 +160,8 @@ def annotate(
             debug_lines.append(
                 f"rotated image offset=({offset_x:.0f},{offset_y:.0f}) norm_pos=({normalized_x:.2f},{normalized_y:.2f})"
             )
-            debug_lines.append("TUNE ORDER: 1) tune base_fwd/base_right near image center")
-            debug_lines.append("TUNE ORDER: 2) gains change magnitude; blue/red axes show rotated direction")
+            #debug_lines.append("TUNE ORDER: 1) tune base_fwd/base_right near image center")
+            #debug_lines.append("TUNE ORDER: 2) gains change magnitude; blue/red axes show rotated direction")
     else:
         debug_lines.append("robot_pose=None: using image-center tracking fallback")
         if target_ball is not None:
