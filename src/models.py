@@ -70,6 +70,7 @@ class GoalDetection:
     y: int
     size_category: str  # "large" for left goal, "small" for right goal
     confidence: float = 1.0  # Geometry-based, should be high
+    delivery_x: Optional[int] = None
 
 
 @dataclass

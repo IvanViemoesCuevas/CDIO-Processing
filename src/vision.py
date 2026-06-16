@@ -8,6 +8,7 @@ import cv2 as cv
 import numpy as np
 from numpy.typing import NDArray
 import os
+from typing import Optional
 try:
     from ultralytics import YOLO
 except Exception:  # pragma: no cover - graceful fallback if ultralytics not available
@@ -74,9 +75,6 @@ def build_ball_mask(
 ) -> np.ndarray:
     """Convenience wrapper that returns only the merged orange+white mask."""
     orange, white, mask = build_ball_masks(hsv_frame, orange_range=orange_range, white_range=white_range)
-    #cv.imshow("orange-mask", orange)
-    #cv.imshow("white-mask", white)
-    #cv.imshow("combined-mask", orange)
     return mask
 
 
@@ -121,7 +119,6 @@ class BallDetectionTuner:
         white_lo = (self._get("WH_lo"), self._get("WS_lo"), self._get("WV_lo"))
         white_hi = (self._get("WH_hi"), self._get("WS_hi"), self._get("WV_hi"))
 
-        # Keep lower <= upper so inRange always receives a valid interval.
         orange_lower = (
             min(orange_lo[0], orange_hi[0]),
             min(orange_lo[1], orange_hi[1]),
@@ -208,143 +205,57 @@ def detect_balls(
     white_range: HSVRange = WHITE_RANGE,
     white_sat_split: Optional[float] = None,
 ) -> list[BallDetection]:
-    """Detect candidate ping-pong balls using a YOLO model and convert detections
-    into the project's BallDetection dataclass so the navigation code can remain
-    unchanged.
+    hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+    ballMask = build_ball_mask(hsv_frame, orange_range=orange_range, white_range=white_range)
+    sat_split = settings.white_sat_split if white_sat_split is None else white_sat_split
 
-    The model path is a placeholder in `YOLO_MODEL_PATH` and must be updated by
-    the user to point to their custom yolo26n weights file.
-    If the ultralytics package is not available or the model fails to load,
-    this function falls back to the original HSV+contour detector.
-    """
-
-    # Prefer YOLO if available
-    model = _ensure_yolo_model()
-    if model is None:
-        # Fallback to original contour-based method if YOLO not installed
-        hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
-        mask = build_ball_mask(hsv_frame, orange_range=orange_range, white_range=white_range)
-        sat_split = settings.white_sat_split if white_sat_split is None else white_sat_split
-
-        contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-        balls: list[BallDetection] = []
-        for contour in contours:
-            area = cv.contourArea(contour)
-            if area < settings.min_ball_area or area > settings.max_ball_area:
-                continue
-            perimeter = cv.arcLength(contour, True)
-            if perimeter <= 0.0:
-                continue
-            circularity = float(4.0 * np.pi * area / (perimeter * perimeter))
-            if circularity < settings.min_ball_circularity:
-                continue
-            (x_float, y_float), radius = cv.minEnclosingCircle(contour)
-            if radius < settings.min_ball_radius or radius > settings.max_ball_radius:
-                continue
-            x = int(x_float)
-            y = int(y_float)
-            sample = hsv_frame[max(0, y-1): y+2, max(0, x-1): x+2]
-            if sample.size == 0:
-                continue
-            sat_mean = float(sample[:, :, 1].mean())
-            color_name = "white" if sat_mean < sat_split else "orange"
-            confidence = min(1.0, circularity * 0.65 + min(1.0, area / 2000.0) * 0.35)
-            if confidence < settings.min_ball_confidence:
-                continue
-            balls.append(
-                BallDetection(
-                    x=x,
-                    y=y,
-                    radius=radius,
-                    color_name=color_name,
-                    confidence=confidence,
-                    circularity=circularity,
-                )
-            )
-        return balls
-
-    # Run YOLO inference on the frame. The ultralytics model accepts BGR frames.
-    try:
-        results = model(frame, verbose=False)
-    except Exception as e:
-        # If inference fails for any reason, return empty list rather than crash.
-        print(f"YOLO inference failed: {e}")
-        return []
-
-    # Results may be batched; take the first (and only) result for this single frame.
-    result = results[0]
-    boxes = getattr(result, "boxes", [])
-    names = getattr(result, "names", {})
-
+    contours, _ = cv.findContours(ballMask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
     balls: list[BallDetection] = []
-    for box in boxes:
-        # Extract coordinates
-        try:
-            xyxy = box.xyxy[0]
-        except Exception:
-            # Some ultralytics versions expose xyxy as a plain array
-            xyxy = box.xyxy
-        try:
-            x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
-        except Exception:
-            # If we can't parse box coordinates, skip this detection
+    for contour in contours:
+        area = cv.contourArea(contour)
+        if area < settings.min_ball_area or area > settings.max_ball_area:
             continue
-
-        # Confidence and class
-        try:
-            conf = float(box.conf[0])
-        except Exception:
-            try:
-                conf = float(box.conf)
-            except Exception:
-                conf = 0.0
-
-        try:
-            cls = int(box.cls[0])
-        except Exception:
-            try:
-                cls = int(box.cls)
-            except Exception:
-                cls = -1
-
-        class_name = str(names.get(cls, "unknown")) if names is not None else "unknown"
-
-        # Filter by configured confidence threshold
-        if conf < settings.min_ball_confidence:
+        perimeter = cv.arcLength(contour, True)
+        if perimeter <= 0.0:
             continue
-
-        cx = (x1 + x2) // 2
-        cy = (y1 + y2) // 2
-        radius = max((x2 - x1), (y2 - y1)) / 2.0
-
+        circularity = float(4.0 * np.pi * area / (perimeter * perimeter))
+        if circularity < settings.min_ball_circularity:
+            continue
+        (x_float, y_float), radius = cv.minEnclosingCircle(contour)
+        if radius < settings.min_ball_radius or radius > settings.max_ball_radius:
+            continue
+        x = int(x_float)
+        y = int(y_float)
+        sample = hsv_frame[max(0, y-1): y+2, max(0, x-1): x+2]
+        if sample.size == 0:
+            continue
+        sat_mean = float(sample[:, :, 1].mean())
+        color_name = "white" if sat_mean < sat_split else "orange"
+        confidence = min(1.0, circularity * 0.65 + min(1.0, area / 2000.0) * 0.35)
+        if confidence < settings.min_ball_confidence:
+            continue
         balls.append(
             BallDetection(
-                x=int(cx),
-                y=int(cy),
-                radius=float(radius),
-                color_name=class_name,
-                confidence=float(conf),
-                circularity=0.0,
+                x=x,
+                y=y,
+                radius=radius,
+                color_name=color_name,
+                confidence=confidence,
+                circularity=circularity,
             )
         )
-
     return balls
 
 
 def choose_target_ball(balls: list[BallDetection], robot_pose: Optional[RobotPose]) -> Optional[BallDetection]:
-    # If no balls detected, return none
     if not balls:
         return None
-
-    # if no robot is detected, take the ball that we are most sure about
     if robot_pose is None:
         best = balls[0]
         for current in balls[1:]:
             if current.confidence * current.radius > best.confidence * best.radius:
                 best = current
         return best
-
-    # Else return ball closest to robot
     return min(balls, key=lambda b: (b.x - robot_pose.x) ** 2 + (b.y - robot_pose.y) ** 2)
 
 
@@ -353,21 +264,15 @@ def match_candidate_target(
     balls: list[BallDetection],
     max_match_distance_px: float = 90.0,
 ) -> Optional[BallDetection]:
-    # If no candidate/balls return none
     if candidate_target is None or not balls:
         return None
-
-    # Find the ball that is closest to the candidate
     best = min(
         balls,
         key=lambda b: (b.x - candidate_target.x) ** 2 + (b.y - candidate_target.y) ** 2,
     )
-
-    # Calculate distance from best to candidate and check if it's within the max match distance
     dist = math.hypot(float(best.x - candidate_target.x), float(best.y - candidate_target.y))
     if dist < max_match_distance_px:
         return best
-
     return None
 
 
@@ -386,8 +291,6 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
     if len(match) == 0:
         return None
     target_index = int(match[0])
-
-    # FIXME maybe use the actual corner locations instead of just creating a square (Could also calculate the confidence)
 
     pts = corners[target_index][0]
     cx = int(np.mean(pts[:, 0]))
@@ -422,7 +325,6 @@ def detect_danger_zones(
     filtered_mask = np.zeros_like(raw_mask)
     zone_w = max(1, w // 3)
 
-    # Keep only sufficiently large connected red regions while preserving holes.
     num_labels, labels, stats, _ = cv.connectedComponentsWithStats(raw_mask, connectivity=8)
     for label in range(1, num_labels):
         area = int(stats[label, cv.CC_STAT_AREA])
@@ -490,129 +392,153 @@ def detect_danger_zones(
 
 def detect_field_corners(frame: np.ndarray, settings: Settings) -> Optional[FieldCorners]:
     """
-    Detect the four corners of the red golf field.
-    Uses contour detection on the red color range.
-
-    Returns FieldCorners with topLeft, topRight, bottomLeft, bottomRight,
-    or None if detection fails.
+    Detects the four corners of the field by finding the centerlines of the red tape 
+    and calculating their intersections.
     """
     hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
-
-    # Build red mask (same as danger zones use)
     red1 = cv.inRange(hsv_frame, RED_RANGE_1.lower, RED_RANGE_1.upper)
     red2 = cv.inRange(hsv_frame, RED_RANGE_2.lower, RED_RANGE_2.upper)
     mask = cv.bitwise_or(red1, red2)
 
-    # Apply morphology to clean up the mask
     kernel = np.ones((5, 5), np.uint8)
     mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
     mask = cv.morphologyEx(mask, cv.MORPH_OPEN, kernel)
 
-    # Find contours
+    # Find the largest contour which represents the red tape
     contours, _ = cv.findContours(mask, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
     if not contours:
         return None
-
-    # Find the largest contour (should be the field boundary)
+        
     largest_contour = max(contours, key=cv.contourArea)
+    
+    # Create an empty image to draw the contour skeleton
+    skeleton = np.zeros_like(mask)
+    cv.drawContours(skeleton, [largest_contour], -1, 255, 1)
+    
+    # We will use probabilistic Hough lines to find the 4 main edges from the outline
+    # This directly finds lines representing the center/edge of the tape
+    lines = cv.HoughLinesP(skeleton, 1, np.pi / 180, 50, minLineLength=100, maxLineGap=20)
+    
+    if lines is None:
+        return None
+        
+    # Categorize lines into roughly vertical and horizontal
+    vertical_lines = []
+    horizontal_lines = []
+    
+    for line in lines:
+        x1, y1, x2, y2 = line[0]
+        angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+        
+        if -45 < angle < 45 or 135 < angle <= 180 or -180 <= angle < -135:
+            horizontal_lines.append(line[0])
+        else:
+            vertical_lines.append(line[0])
 
-    # Approximate the contour to a polygon (should be roughly rectangular)
-    epsilon = 0.02 * cv.arcLength(largest_contour, True)
-    approx = cv.approxPolyDP(largest_contour, epsilon, True)
-
-    # We expect 4 corners for a rectangular field
-    if len(approx) != 4:
+    if not vertical_lines or not horizontal_lines:
         return None
 
-    # Extract the four corners and sort them
-    corners = approx.reshape(4, 2).astype(np.int32)
+    # Find the extreme lines (leftmost, rightmost, topmost, bottommost)
+    # We assume the field is roughly centered
+    
+    # Left vertical
+    left_line = min(vertical_lines, key=lambda l: (l[0] + l[2])/2)
+    # Right vertical
+    right_line = max(vertical_lines, key=lambda l: (l[0] + l[2])/2)
+    # Top horizontal
+    top_line = min(horizontal_lines, key=lambda l: (l[1] + l[3])/2)
+    # Bottom horizontal
+    bottom_line = max(horizontal_lines, key=lambda l: (l[1] + l[3])/2)
+    
+    def get_intersection(line1, line2):
+        """Calculates intersection of two line segments given as (x1, y1, x2, y2)."""
+        x1, y1, x2, y2 = line1
+        x3, y3, x4, y4 = line2
+        
+        denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+        if denom == 0:
+            return None
+            
+        px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / denom
+        py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / denom
+        return int(px), int(py)
 
-    # Sort corners: top-left, top-right, bottom-left, bottom-right
-    # First, separate by y-coordinate (top vs bottom)
-    top_corners = sorted(corners, key=lambda p: p[1])[:2]
-    bottom_corners = sorted(corners, key=lambda p: p[1])[2:]
+    # Calculate intersections
+    top_left = get_intersection(left_line, top_line)
+    top_right = get_intersection(right_line, top_line)
+    bottom_left = get_intersection(left_line, bottom_line)
+    bottom_right = get_intersection(right_line, bottom_line)
 
-    # Sort each pair by x-coordinate
-    top_corners = sorted(top_corners, key=lambda p: p[0])
-    bottom_corners = sorted(bottom_corners, key=lambda p: p[0])
-
-    topLeft = tuple(top_corners[0])
-    topRight = tuple(top_corners[1])
-    bottomLeft = tuple(bottom_corners[0])
-    bottomRight = tuple(bottom_corners[1])
+    if None in (top_left, top_right, bottom_left, bottom_right):
+        return None
 
     return FieldCorners(
-        topLeft=topLeft,
-        topRight=topRight,
-        bottomLeft=bottomLeft,
-        bottomRight=bottomRight,
+        topLeft=top_left,
+        topRight=top_right,
+        bottomLeft=bottom_left,
+        bottomRight=bottom_right,
     )
 
-
-def calculate_goal_positions(field_corners: FieldCorners) -> tuple[Optional[GoalDetection], Optional[GoalDetection]]:
+def find_small_goal(frame: np.ndarray, field_corners: Optional[FieldCorners], settings: Settings) -> Optional[GoalDetection]:
     """
-    Calculate goal positions based on field geometry.
-
-    The golf field has two goals on the vertical sides:
-    - Left goal (large) at the midpoint of the left edge
-    - Right goal (small) at the midpoint of the right edge
-
-    Args:
-        field_corners: The four corners of the field
-
-    Returns:
-        Tuple of (left_goal, right_goal) - both GoalDetection objects or None if calculation fails
+    Scans the right vertical edge of the detected field to find the small goal.
     """
+    if field_corners is None:
+        return None
+
     try:
-        # Extract corner coordinates
-        tl = field_corners.topLeft
+        hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+        red1 = cv.inRange(hsv_frame, RED_RANGE_1.lower, RED_RANGE_1.upper)
+        red2 = cv.inRange(hsv_frame, RED_RANGE_2.lower, RED_RANGE_2.upper)
+        redMaskForBoard = cv.bitwise_or(red1, red2)
+
         tr = field_corners.topRight
-        bl = field_corners.bottomLeft
         br = field_corners.bottomRight
 
-        # Calculate left goal position (midpoint of left edge)
-        left_goal_x = int((tl[0] + bl[0]) / 2.0)
-        left_goal_y = int((tl[1] + bl[1]) / 2.0)
+        # --- NYT: Begræns søgeområdet til midten af banen ---
+        edge_height = br[1] - tr[1]
+        if edge_height <= 0: return None # Avoid division by zero or negative height
+        
+        y_search_start = tr[1] + int(edge_height * 0.30) # Start 30% nede
+        y_search_end = tr[1] + int(edge_height * 0.70)   # Slut 70% nede
+        # --- SLUT PÅ NYT ---
+        
+        search_width_px = 40
+        x_center = int((tr[0] + br[0]) / 2)
+        x_start = max(0, x_center - search_width_px // 2)
+        x_end = min(redMaskForBoard.shape[1], x_center + search_width_px // 2)
 
-        # Calculate right goal position (midpoint of right edge)
-        right_goal_x = int((tr[0] + br[0]) / 2.0)
-        right_goal_y = int((tr[1] + br[1]) / 2.0)
+        if not (y_search_start < y_search_end and x_start < x_end):
+            return None
 
-        left_goal = GoalDetection(
-            x=left_goal_x,
-            y=left_goal_y,
-            size_category="large",
-            confidence=1.0
-        )
+        right_strip = redMaskForBoard[y_search_start:y_search_end, x_start:x_end]
+        vertical_projection = np.max(right_strip, axis=1)
+        gap_indices = np.where(vertical_projection == 0)[0]
+        
+        if len(gap_indices) == 0:
+            return None
 
-        right_goal = GoalDetection(
-            x=right_goal_x,
-            y=right_goal_y,
-            size_category="small",
-            confidence=1.0
-        )
+        split_indices = np.where(np.diff(gap_indices) > 1)[0] + 1
+        gap_groups = np.split(gap_indices, split_indices)
 
-        return left_goal, right_goal
+        if not gap_groups:
+            return None
+
+        largest_gap = max(gap_groups, key=len)
+
+        if len(largest_gap) > settings.min_goal_gap_px:
+            gap_center_local_y = int(np.mean(largest_gap))
+            goal_y = y_search_start + gap_center_local_y
+            goal_x = x_center
+            
+            smallGoal = GoalDetection(
+                x=goal_x,
+                y=goal_y,
+                size_category="small"
+            )
+            return smallGoal
 
     except Exception as e:
-        print(f"Error calculating goal positions: {e}")
-        return None, None
-
-
-def detect_goals(frame: np.ndarray, settings: Settings) -> tuple[Optional[GoalDetection], Optional[GoalDetection], Optional[FieldCorners]]:
-    """
-    Detect goal positions by calculating from field geometry.
-
-    Returns:
-        Tuple of (left_goal, right_goal, field_corners)
-        Goals are None if field corners cannot be detected.
-    """
-    field_corners = detect_field_corners(frame, settings)
-
-    if field_corners is None:
-        return None, None, None
-
-    left_goal, right_goal = calculate_goal_positions(field_corners)
-
-    return left_goal, right_goal, field_corners
+        print(f"[ERROR] Could not detect small goal: {e}")
+    
+    return None

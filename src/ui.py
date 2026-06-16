@@ -39,14 +39,11 @@ def annotate(
         danger: Optional[DangerFlags] = None,
         danger_state: Optional[DangerState] = None,
         danger_contours: Optional[list] = None,
-        left_goal: Optional[GoalDetection] = None,
-        right_goal: Optional[GoalDetection] = None,
         field_corners: Optional[FieldCorners] = None,
+        small_goal: Optional[GoalDetection] = None,
 ) -> np.ndarray:
     out = frame.copy()
 
-    """
-    
     # Mark the detected balls
     for b in balls:
         ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
@@ -54,7 +51,6 @@ def annotate(
         label = (
             f"{b.color_name} "
             f"conf={b.confidence:.2f} "
-            f"circ={b.circularity:.2f} "
             f"r={b.radius:.1f}"
         )
         text_pos = (b.x - 36, max(14, b.y - int(b.radius) - 8))
@@ -74,10 +70,8 @@ def annotate(
             color,
             2,
         )
-        
-    """
 
-    # Mark field corners and goals
+    # Mark field corners (this is the green overlay)
     if field_corners is not None:
         corners_list = [
             field_corners.topLeft,
@@ -95,15 +89,23 @@ def annotate(
             cv.circle(out, pt, 5, (0, 255, 0), -1)
             cv.putText(out, f"C{i+1}", (pt[0]+10, pt[1]+10), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-    if left_goal is not None:
-        cv.circle(out, (left_goal.x, left_goal.y), 15, (255, 100, 100), 3)
-        cv.circle(out, (left_goal.x, left_goal.y), 4, (255, 100, 100), -1)
-        cv.putText(out, "Left Goal", (left_goal.x + 20, left_goal.y), cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 100, 100), 2)
-
-    if right_goal is not None:
-        cv.circle(out, (right_goal.x, right_goal.y), 15, (100, 100, 255), 3)
-        cv.circle(out, (right_goal.x, right_goal.y), 4, (100, 100, 255), -1)
-        cv.putText(out, "Right Goal", (right_goal.x - 100, right_goal.y), cv.FONT_HERSHEY_SIMPLEX, 0.6, (100, 100, 255), 2)
+    # Mark the small goal
+    if small_goal is not None:
+        goal_color = (255, 0, 255)  # pink
+        cv.circle(out, (small_goal.x, small_goal.y), 25, goal_color, 4)
+        cv.circle(out, (small_goal.x, small_goal.y), 6, goal_color, -1)
+        cv.putText(
+            out,
+            f"Small Goal ({small_goal.x},{small_goal.y})",
+            (small_goal.x - 160, small_goal.y - 20),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            goal_color,
+            2,
+        )
+    else:
+        cv.putText(out, "Small Goal: NOT DETECTED", (10, 140),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
 
     # Mark robot and navigation debug info

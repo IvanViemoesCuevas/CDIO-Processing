@@ -28,6 +28,10 @@ class Settings:
     danger_rear_ignore_px: float = 35.0
     pose_turn_deadband_deg: float = 8.0
     pose_arrival_distance_px: float = 110.0
+    
+    # Goal detection settings
+    min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
+    delivery_point_offset_px: int = 40 # How far from the goal line to set the delivery point
 
 
 # (Hue, Saturation, brightness)
