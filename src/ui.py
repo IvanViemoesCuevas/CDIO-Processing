@@ -6,6 +6,7 @@ import cv2 as cv
 
 from models import *
 from src.vision import find_danger_perspective_points
+from typing import Optional
 
 ROBOT_LENGTH_PX = 170
 ROBOT_WIDTH_PX = 80
@@ -39,6 +40,8 @@ def annotate(
         danger: Optional[DangerFlags] = None,
         danger_state: Optional[DangerState] = None,
         danger_contours: Optional[list] = None,
+        field_corners: Optional[FieldCorners] = None,
+        small_goal: Optional[GoalDetection] = None,
 ) -> np.ndarray:
     out = frame.copy()
 
@@ -56,7 +59,7 @@ def annotate(
                 (255, 0, 255),
                 2,
             )
-
+    """
     # Mark the detected balls
     for b in balls:
         ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
@@ -84,12 +87,99 @@ def annotate(
             color,
             2,
         )
+        """
+
+    # Mark field corners (this is the green overlay)
+    if field_corners is not None:
+        corners_list = [
+            field_corners.topLeft,
+            field_corners.topRight,
+            field_corners.bottomRight, # Note: ordering for polylines drawing
+            field_corners.bottomLeft
+        ]
+        # Draw field boundary
+        pts = np.array(corners_list, np.int32)
+        pts = pts.reshape((-1, 1, 2))
+        cv.polylines(out, [pts], True, (0, 255, 0), 2)
+
+        # Draw corners
+        for i, pt in enumerate(corners_list):
+            cv.circle(out, pt, 5, (0, 255, 0), -1)
+            cv.putText(out, f"C{i+1}", (pt[0]+10, pt[1]+10), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    # Mark the small goal and its approach/delivery points
+    if small_goal is not None:
+        # Draw the true goal center
+        goal_color = (255, 0, 255)  # Magenta for the true goal
+        cv.circle(out, (small_goal.x, small_goal.y), 15, goal_color, 2)
+        cv.circle(out, (small_goal.x, small_goal.y), 4, goal_color, -1)
+        cv.putText(
+            out,
+            f"Small Goal ({small_goal.x},{small_goal.y})",
+            (small_goal.x - 170, small_goal.y - 15),
+            cv.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            goal_color,
+            2,
+        )
+
+        alignment_point = None
+        delivery_point = None
+
+        # Draw the alignment point
+        if small_goal.alignment_point_x is not None and small_goal.alignment_point_y is not None:
+            alignment_point = (small_goal.alignment_point_x, small_goal.alignment_point_y)
+            alignment_color = (0, 255, 0)  # Green for the alignment point
+            cv.circle(out, alignment_point, 10, alignment_color, -1)
+            cv.putText(
+                out,
+                f"Alignment ({alignment_point[0]},{alignment_point[1]})",
+                (alignment_point[0] - 120, alignment_point[1] + 25),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                alignment_color,
+                2,
+            )
+            cv.line(out, alignment_point, (small_goal.x, small_goal.y), (255, 255, 255), 1)
+
+        # Draw the delivery point
+        if small_goal.delivery_point_x is not None and small_goal.delivery_point_y is not None:
+            delivery_point = (small_goal.delivery_point_x, small_goal.delivery_point_y)
+            delivery_color = (255, 0, 128)  # Purple for the delivery point
+            cv.circle(out, delivery_point, 10, delivery_color, -1)
+            cv.putText(
+                out,
+                f"Delivery ({delivery_point[0]},{delivery_point[1]})",
+                (delivery_point[0] - 110, delivery_point[1] + 25),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                delivery_color,
+                2,
+            )
+
+        if alignment_point is not None and delivery_point is not None:
+            cv.line(out, alignment_point, delivery_point, (255, 255, 255), 1)
+            cv.arrowedLine(out, delivery_point, (small_goal.x, small_goal.y), (255, 255, 255), 1, tipLength=0.25)
+
+    else:
+        cv.putText(out, "Small Goal: NOT DETECTED", (10, 140),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
 
     # Mark robot and navigation debug info
     debug_lines: list[str] = []
     if robot_pose is not None:
-        # ...existing code...
+        #draw_robot_footprint(out, robot_pose, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
+        #cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
+        #marker_point = (robot_pose.x, robot_pose.y)
+
+        #arrow_len = 45
+        #heading_x = math.cos(robot_pose.heading_rad)
+        #heading_y = math.sin(robot_pose.heading_rad)
+        #x2 = int(robot_pose.x + arrow_len * heading_x)
+        #y2 = int(robot_pose.y + arrow_len * heading_y)
+        #cv.arrowedLine(out, (robot_pose.x, robot_pose.y), (x2, y2), (0, 255, 0), 2, tipLength=0.25)
+        #cv.putText(out, "robot", (robot_pose.x + 10, robot_pose.y - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
         # Draw corrected drive center and heading
         (

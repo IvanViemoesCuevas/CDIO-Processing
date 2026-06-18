@@ -2,14 +2,16 @@ import argparse
 import time
 import cv2 as cv
 from typing import Optional
+import platform
 
 from config import *
 from robot_client import RobotClient
-from src.models import NavigationContext, NavigationState
-from src.navigation import decide_command
-from src.ui import annotate
-from src.vision import (
+from models import NavigationContext, NavigationState, GoalDetection, BallDetection
+from navigation import decide_command
+from ui import annotate
+from vision import (
     BallDetectionTuner,
+    BallHandoffManager,
     choose_target_ball,
     correct_perspective,
     detect_balls,
@@ -17,6 +19,8 @@ from src.vision import (
     detect_robot_pose,
     make_ball_debug_view,
     match_candidate_target,
+    detect_field_corners,
+    find_small_goal,
 )
 
 
@@ -42,15 +46,14 @@ def main() -> int:
     )
 
     # Get the video capture
-    cap0 = cv.VideoCapture(0)
+    if platform.system() == "Windows":
+        cap0 = cv.VideoCapture(0, cv.CAP_DSHOW)
+    else:
+        cap0 = cv.VideoCapture(0)
+
     if not cap0.isOpened():
         print("Error opening video stream 0")
         return 1
-
-    #cap1 = cv.VideoCapture(1)
-    #if not cap1.isOpened():
-    #    print("Error opening video stream 1")
-    #    return 1
 
     # Connect to the client
     client: Optional[RobotClient] = None
@@ -80,6 +83,12 @@ def main() -> int:
     # Setup navigation state variables
     nav_state = NavigationState()
 
+    # Cache for the small goal
+    cached_small_goal: Optional[GoalDetection] = None
+
+    # Setup handoff manager
+    handoff_manager = BallHandoffManager(required_empty_frames=11)
+
     try:
         while True:
             #image_path = "Test_Image.png"  # Change this to your image path
@@ -96,6 +105,40 @@ def main() -> int:
             frame = correct_perspective(frame)
 
             # Detect robot location and direction
+            # --- Vision Pipeline ---
+
+            # 1. Detect field corners (existing logic for green overlay)
+            field_corners = detect_field_corners(frame, settings)
+
+            # 2. Calculate small goal ONLY ONCE based on field corners
+            if cached_small_goal is None and field_corners is not None:
+                tr = field_corners.topRight
+                br = field_corners.bottomRight
+
+                # Calculate middle of the right edge
+                goal_x = int((tr[0] + br[0]) / 2)
+                goal_y = int((tr[1] + br[1]) / 2)
+
+                # Calculate alignment and delivery points
+                alignment_x = goal_x - settings.alignment_point_offset_px
+                delivery_x = goal_x - settings.delivery_point_offset_px
+
+                cached_small_goal = GoalDetection(
+                    x=goal_x,
+                    y=goal_y,
+                    size_category="small"
+                )
+                cached_small_goal.alignment_point_x = alignment_x
+                cached_small_goal.alignment_point_y = goal_y
+                cached_small_goal.delivery_point_x = delivery_x
+                cached_small_goal.delivery_point_y = goal_y
+
+                print(f"Small Goal calculated and cached at: ({cached_small_goal.x}, {cached_small_goal.y})")
+                print(f"Alignment point: ({cached_small_goal.alignment_point_x}, {cached_small_goal.alignment_point_y})")
+                print(f"Delivery point: ({cached_small_goal.delivery_point_x}, {cached_small_goal.delivery_point_y})")
+
+
+            # Other detections (unchanged)
             robot_pose = detect_robot_pose(frame, settings)
 
             tuning = tuner.read() if tuner is not None else default_tuning
@@ -108,6 +151,10 @@ def main() -> int:
                 white_range=tuning.white_range,
                 white_sat_split=tuning.white_sat_split,
             )
+            danger, danger_state, _, danger_contours = detect_danger_zones(frame, settings, robot_pose)
+
+            # Update handoff manager and check for handoff condition
+            handoff_manager.update(balls)
 
             # Choose target
             now = time.monotonic()
@@ -137,9 +184,6 @@ def main() -> int:
             elif not commit_active:
                 nav_state.candidate_target = None
 
-            # Detect danger zones
-            danger, danger_state, edges, danger_contours = detect_danger_zones(frame, settings, robot_pose)
-
             # Decide command
             decision, nav_state = decide_command(
                 context=NavigationContext(
@@ -151,6 +195,8 @@ def main() -> int:
                     now=now,
                     balls_count=len(balls),
                     candidate_target_visible=matched_candidate is not None,
+                    handoff_manager=handoff_manager,
+                    small_goal=cached_small_goal,
                 ),
                 state=nav_state,
                 settings=settings,
@@ -164,12 +210,11 @@ def main() -> int:
                 candidate_command = command
                 candidate_count = 1
 
-            # Decide whether to send command
-            now = time.time()
+            # --- Command Sending (unchanged) ---
+            now_time = time.time()
             should_send = (
                 candidate_count >= settings.stable_frames_required
-                #and candidate_command != last_send_command
-                and now - last_send_time >= settings.send_interval_sec
+                and now_time - last_send_time >= settings.send_interval_sec
             )
 
             if should_send and candidate_command is not None:
@@ -177,20 +222,22 @@ def main() -> int:
                     client.send_char(candidate_command)
                 print(f"sent={candidate_command} reason={reason}")
                 last_send_command = candidate_command
-                last_send_time = now
+                last_send_time = now_time
 
             # Annotate frame with detections and command
             display = annotate(
                 frame=frame,
-                robot_pose=robot_pose,
-                balls=balls,
-                target_ball=target_ball,
                 command=command,
                 reason=reason,
                 last_sent_command=last_send_command,
+                balls=balls,
+                target_ball=target_ball,
+                robot_pose=robot_pose,
                 danger=danger,
                 danger_state=danger_state,
                 danger_contours=danger_contours,
+                field_corners=field_corners,
+                small_goal=cached_small_goal,
             )
             cv.imshow("Golfbot", display)
 
@@ -216,7 +263,7 @@ def main() -> int:
                     client.send_char(CMD_SWITCH)
 
     finally:
-        cap0.release()  # Uncomment if using video capture
+        cap0.release()
         if client is not None:
             client.send_char(CMD_QUIT)
             client.close()

@@ -29,6 +29,11 @@ class Settings:
     pose_turn_deadband_deg: float = 8.0
     pose_arrival_distance_px: float = 110.0
 
+    # Goal detection settings
+    min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
+    alignment_point_offset_px: int = 280 # Move alignment point further left from the goal line
+    delivery_point_offset_px: int = 130 # Move delivery point further left from the goal line
+
 
 # (Hue, Saturation, brightness)
 @dataclass
