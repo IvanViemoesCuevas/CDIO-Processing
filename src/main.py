@@ -11,6 +11,7 @@ from src.ui import annotate
 from src.vision import (
     BallDetectionTuner,
     choose_target_ball,
+    correct_perspective,
     detect_balls,
     detect_danger_zones,
     detect_robot_pose,
@@ -21,7 +22,7 @@ from src.vision import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="172.20.10.3  ", help="Robot IP/hostname")
+    parser.add_argument("--host", default="172.20.10.9", help="Robot IP/hostname")
     parser.add_argument("--port", type=int, default=12345, help="Robot TCP port")
     parser.add_argument("--dry-run", action="store_true", help="Do not open socket; only print decisions")
     parser.add_argument(
@@ -91,6 +92,8 @@ def main() -> int:
             if not ok:
                 print("Error reading frame")
                 break
+
+            frame = correct_perspective(frame)
 
             # Detect robot location and direction
             robot_pose = detect_robot_pose(frame, settings)
@@ -208,6 +211,9 @@ def main() -> int:
                 if client is not None:
                     client.send_char(CMD_QUIT)
                 break
+            elif key == ord('x'):
+                if client is not None:
+                    client.send_char(CMD_SWITCH)
 
     finally:
         cap0.release()  # Uncomment if using video capture

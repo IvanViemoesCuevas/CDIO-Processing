@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Settings:
-    host: str = "172.20.10.3"
+    host: str = "172.20.10.9"
     port: int = 12345
     send_interval_sec: float = 0.12
     stable_frames_required: int = 2
@@ -55,4 +55,5 @@ CMD_BACKWARD = "k"
 CMD_LEFT = "j"
 CMD_RIGHT = "l"
 CMD_STOP = "s"
+CMD_SWITCH = "x"
 CMD_QUIT = "q"

@@ -5,6 +5,7 @@ import numpy as np
 import cv2 as cv
 
 from models import *
+from src.vision import find_danger_perspective_points
 
 ROBOT_LENGTH_PX = 170
 ROBOT_WIDTH_PX = 80
@@ -40,7 +41,22 @@ def annotate(
         danger_contours: Optional[list] = None,
 ) -> np.ndarray:
     out = frame.copy()
-    
+
+    corners = find_danger_perspective_points(frame)
+
+    if corners is not None:
+        for i, (x, y) in enumerate(corners):
+            cv.circle(out, (int(x), int(y)), 15, (255, 0, 255), -1)
+            cv.putText(
+                out,
+                str(i),
+                (int(x) + 20, int(y)),
+                cv.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 0, 255),
+                2,
+            )
+
     # Mark the detected balls
     for b in balls:
         ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
