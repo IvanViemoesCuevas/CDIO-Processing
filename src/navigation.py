@@ -1,4 +1,5 @@
 import math
+from dataclasses import replace
 
 from config import *
 
@@ -6,6 +7,7 @@ from models import (
     NavigationContext,
     NavigationResult,
     NavigationState,
+    BallDetection,
 )
 
 # Calibration offsets between the elevated ArUco marker and the robot's real ground pose.
@@ -102,12 +104,14 @@ def corrected_robot_pose_values(robot_pose, frame_width: int | None = None, fram
         normalized_y,
     )
 
-def decide_immediate_command(context: NavigationContext, settings: Settings) -> NavigationResult:
-    # FIXME - Acting on danger is a bit wonky
-
+def decide_immediate_command(context: NavigationContext, settings: Settings, state: NavigationState, arrival_distance_px=None, turn_deadband_deg=None) -> NavigationResult:
     danger = context.danger
     danger_state = context.danger_state
     target_ball = context.target_ball
+
+    # Use specific tolerances for handoff, otherwise use defaults
+    arrival_dist = arrival_distance_px if arrival_distance_px is not None else settings.pose_arrival_distance_px
+    turn_deadband = turn_deadband_deg if turn_deadband_deg is not None else settings.pose_turn_deadband_deg
 
     if danger_state is not None and danger_state.too_close:
         if abs(danger_state.nearest_dx_body) <= float(settings.danger_center_deadband_px):
@@ -130,7 +134,6 @@ def decide_immediate_command(context: NavigationContext, settings: Settings) -> 
         return NavigationResult(CMD_STOP, "danger:both")
 
     if target_ball is None:
-        # FIXME - No target visible: stop
         return NavigationResult(CMD_STOP, "no_ball")
 
     if context.robot_pose is not None:
@@ -141,49 +144,116 @@ def decide_immediate_command(context: NavigationContext, settings: Settings) -> 
             frame_height=frame_height,
         )
 
-        # setup vector from corrected robot drive center to target
         dx = float(target_ball.x - robot_x)
         dy = float(target_ball.y - robot_y)
         target_heading = math.atan2(dy, dx)
-
-        # Compute angle difference between robot and target
         heading_error = normalize_angle_rad(target_heading - robot_heading)
         heading_error_deg = math.degrees(heading_error)
-
-        # Compute distance from robot to target (straight line)
         distance_px = math.hypot(dx, dy)
 
-        # If target is sufficiently to one side (outside deadband), turn first.
-        if heading_error_deg < -settings.pose_turn_deadband_deg:
+        # Hysteresis for turning
+        turn_hysteresis_factor = 1.5
+        effective_turn_deadband = turn_deadband
+        if state.last_command == CMD_FORWARD:
+            effective_turn_deadband *= turn_hysteresis_factor
+
+        if heading_error_deg < -effective_turn_deadband:
             return NavigationResult(CMD_LEFT, f"pose:left err={heading_error_deg:.1f}")
-        if heading_error_deg > settings.pose_turn_deadband_deg:
+        if heading_error_deg > effective_turn_deadband:
             return NavigationResult(CMD_RIGHT, f"pose:right err={heading_error_deg:.1f}")
 
-        # If heading is acceptable and still far away, drive forward.
-        if distance_px > settings.pose_arrival_distance_px:
+        if distance_px > arrival_dist:
             return NavigationResult(CMD_FORWARD, f"pose:forward d={distance_px:.0f}")
 
-        # If close enough, stop (arrived).
         return NavigationResult(CMD_STOP, f"pose:arrived d={distance_px:.0f}")
 
-    else: # Only use this if we can't find the robot (recognizes it as the robot having the camero on it)
-        # Calculate horizontal error from center of frame to target ball
+    else:
         center_x = context.frame_width // 2
         error_x = target_ball.x - center_x
 
-        # Too far right of image center, turn left
         if error_x < -settings.align_deadband_px:
             return NavigationResult(CMD_LEFT, f"track:{target_ball.color_name}:left")
-        # Too far left of image center, turn right
         if error_x > settings.align_deadband_px:
             return NavigationResult(CMD_RIGHT, f"track:{target_ball.color_name}:right")
-        # Use radius as distance proxy (small radius = far away -> go forward)
         if target_ball.radius < settings.target_radius_px:
             return NavigationResult(CMD_FORWARD, f"track:{target_ball.color_name}:forward")
-        # Otherwise mark as arrived
         return NavigationResult(CMD_STOP, f"track:{target_ball.color_name}:arrived")
 
 
+def decide_command(
+    context: NavigationContext,
+    state: NavigationState,
+    settings: Settings,
+) -> tuple[NavigationResult, NavigationState]:
+    
+    # Handoff Logic
+    if context.handoff_manager and context.handoff_manager.ready_for_handoff and state.handoff_phase == "idle":
+        state.handoff_phase = "approaching_alignment"
+        print("Handoff: Phase -> approaching_alignment")
+
+    if state.handoff_phase != "idle":
+        if context.small_goal is None:
+            return NavigationResult(CMD_STOP, "handoff:no_goal"), state
+
+        # --- Phase: approaching_alignment ---
+        if state.handoff_phase == "approaching_alignment":
+            alignment_target = BallDetection(x=context.small_goal.alignment_point_x, y=context.small_goal.alignment_point_y, radius=settings.pose_arrival_distance_px, color_name="align_pt", confidence=1.0)
+            nav_context = replace(context, target_ball=alignment_target)
+            res = decide_immediate_command(nav_context, settings, state, arrival_distance_px=50) # Tighter arrival
+            if "arrived" in res.reason:
+                state.handoff_phase = "aligning"
+                state.hold_command_until = context.now + 1.0 # Longer pause
+                print("Handoff: Arrived at alignment point. Phase -> aligning")
+                return NavigationResult(CMD_STOP, "handoff:arrived_align"), state
+            return res, state
+
+        # --- Phase: aligning ---
+        if state.handoff_phase == "aligning":
+            if state.hold_command_until > context.now:
+                return NavigationResult(CMD_STOP, "handoff:pausing"), state
+            
+            goal_target = BallDetection(x=context.small_goal.x, y=context.small_goal.y, radius=0, color_name="goal", confidence=1.0)
+            nav_context = replace(context, target_ball=goal_target)
+            res = decide_immediate_command(nav_context, settings, state, turn_deadband_deg=5) # Tighter alignment
+
+            if res.command not in [CMD_LEFT, CMD_RIGHT]:
+                state.handoff_phase = "approaching_delivery"
+                state.hold_command_until = context.now + 1.0 # Longer pause
+                print("Handoff: Aligned with goal. Phase -> approaching_delivery")
+                return NavigationResult(CMD_STOP, "handoff:aligned"), state
+            return res, state
+
+        # --- Phase: approaching_delivery ---
+        if state.handoff_phase == "approaching_delivery":
+            if state.hold_command_until > context.now:
+                return NavigationResult(CMD_STOP, "handoff:pausing"), state
+
+            delivery_target = BallDetection(x=context.small_goal.delivery_point_x, y=context.small_goal.delivery_point_y, radius=settings.pose_arrival_distance_px, color_name="delivery_pt", confidence=1.0)
+            nav_context = replace(context, target_ball=delivery_target)
+            res = decide_immediate_command(nav_context, settings, state, arrival_distance_px=50) # Tighter arrival
+
+            if "arrived" in res.reason:
+                state.handoff_phase = "delivering"
+                state.hold_command_until = context.now + 1.0 # Longer pause
+                print("Handoff: Arrived at delivery point. Phase -> delivering")
+                return NavigationResult(CMD_STOP, "handoff:arrived_delivery"), state
+            return res, state
+
+        # --- Phase: delivering ---
+        if state.handoff_phase == "delivering":
+            if state.hold_command_until > context.now:
+                return NavigationResult(CMD_STOP, "handoff:delivered_stop"), state
+            state.handoff_phase = "done"
+            print("Handoff: Delivery complete. Phase -> done")
+            return NavigationResult(CMD_STOP, "handoff:done_stop"), state
+
+        # --- Phase: done ---
+        if state.handoff_phase == "done":
+            return NavigationResult(CMD_STOP, "handoff:done_stop"), state
+
+    # Regular ball-following logic
+    immediate = decide_immediate_command(context, settings, state)
+    return apply_commit_transitions(immediate, context, state, settings)
 
 
 def apply_commit_transitions(
@@ -196,54 +266,34 @@ def apply_commit_transitions(
         candidate_target=state.candidate_target,
         hold_command_until=state.hold_command_until,
         last_target_seen_time=state.last_target_seen_time,
+        handoff_phase=state.handoff_phase,
+        last_command = result.command
     )
 
-    # If danger, commit to the command until it's no longer dangerous (don't override with new commands)
     if result.reason.startswith("danger"):
         return result, next_state
 
-    # When the robot reaches a target, it stores that ball as committed and changes command to forward.
-    # This helps when the ball disappears under/behind the robot due to camera angle.
     if result.reason.endswith(":arrived") and context.target_ball is not None:
         next_state.candidate_target = context.target_ball
         return NavigationResult(CMD_FORWARD, f"commit:{result.reason}"), next_state
 
-    # If there is no committed target, return.
     if next_state.candidate_target is None:
         return result, next_state
 
-    # Check if committed target has disappeared (may indicate ball was collected under/behind robot)
-    # Do this check even within the hold window
     if context.target_ball is None and context.balls_count == 0 and context.now <= next_state.hold_command_until:
-        # We had a target, it's gone, and we're in commit window -> likely collected!
-        # Mark that we've handled the collection
         next_state.hold_command_until = context.now
         return NavigationResult(CMD_FORWARD, f"commit:ball_disappeared"), next_state
 
-    # If not yet time to recompute, keep result.
     if not (next_state.hold_command_until < context.now):
         return result, next_state
 
-    # Recompute: Define “continue-forward-until” based on last target seen time + configured window.
     next_state.hold_command_until = (
         next_state.last_target_seen_time + settings.commit_forward_window_sec
     )
 
-    # There are balls, but not the committed one -> keep pushing forward briefly.
     if context.balls_count > 0 and not context.candidate_target_visible:
         return NavigationResult(CMD_FORWARD, "commit:target_lost"), next_state
-    # no balls at all, but still inside hold window -> keep pushing forward briefly.
     if context.balls_count == 0 and context.now <= next_state.hold_command_until:
         return NavigationResult(CMD_FORWARD, "commit:no_ball"), next_state
 
-    # Otherwise fall back to original immediate result (which may be to stop or turn or whatever)
     return result, next_state
-
-
-def decide_command(
-    context: NavigationContext,
-    state: NavigationState,
-    settings: Settings,
-) -> tuple[NavigationResult, NavigationState]:
-    immediate = decide_immediate_command(context, settings)
-    return apply_commit_transitions(immediate, context, state, settings)

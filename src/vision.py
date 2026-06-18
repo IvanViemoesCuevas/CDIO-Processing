@@ -43,6 +43,7 @@ def _ensure_yolo_model():
         try:
             # Instantiate model (user should edit YOLO_MODEL_PATH to point at their weights)
             _yolo_model = YOLO(YOLO_MODEL_PATH)
+            print("✅ YOLO model loaded successfully.")
         except Exception as e:
             # Catch errors such as corrupted/unsupported checkpoint files and fall back
             print(f"Failed to load YOLO model from '{YOLO_MODEL_PATH}': {e}")
@@ -159,17 +160,20 @@ class BallHandoffManager:
         """
         self.required_empty_frames = required_empty_frames
         self._empty_frame_counter = 0
+        self._has_seen_ball = False
 
     def update(self, balls: list[BallDetection]) -> None:
         """
         Updates the manager's state based on current frame's ball detections.
         :param balls: A list of BallDetection objects from the current frame.
         """
-        # Track field state: increment counter if empty, reset if balls found
-        if not balls:
-            self._empty_frame_counter += 1
-        else:
+        # Track field state: first require that at least one ball has been detected.
+        # This prevents the robot from driving to the goal at startup when the field is empty.
+        if balls:
+            self._has_seen_ball = True
             self._empty_frame_counter = 0
+        else:
+            self._empty_frame_counter += 1
 
     def field_is_clear(self) -> bool:
         """
@@ -183,7 +187,7 @@ class BallHandoffManager:
         Check if field is clear and ready for handoff.
         :return: True if field is empty for required frames, False otherwise.
         """
-        return self.field_is_clear()
+        return self._has_seen_ball and self.field_is_clear()
 
     @property
     def empty_frames_count(self) -> int:
@@ -195,6 +199,7 @@ class BallHandoffManager:
     def reset(self) -> None:
         """Resets the field-empty counter."""
         self._empty_frame_counter = 0
+        self._has_seen_ball = False
 
 
 
@@ -256,6 +261,68 @@ def detect_balls(
     white_range: HSVRange = WHITE_RANGE,
     white_sat_split: Optional[float] = None,
 ) -> list[BallDetection]:
+    # Try to use YOLO model first
+    model = _ensure_yolo_model()
+    if model:
+        try:
+            results = model(frame, verbose=False)
+            result = results[0]
+            boxes = getattr(result, "boxes", [])
+            names = getattr(result, "names", {})
+            
+            balls: list[BallDetection] = []
+            for box in boxes:
+                try:
+                    xyxy = box.xyxy[0]
+                except Exception:
+                    xyxy = box.xyxy
+                try:
+                    x1, y1, x2, y2 = int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3])
+                except Exception:
+                    continue
+
+                try:
+                    conf = float(box.conf[0])
+                except Exception:
+                    try:
+                        conf = float(box.conf)
+                    except Exception:
+                        conf = 0.0
+
+                try:
+                    cls = int(box.cls[0])
+                except Exception:
+                    try:
+                        cls = int(box.cls)
+                    except Exception:
+                        cls = -1
+
+                class_name = str(names.get(cls, "unknown")) if names is not None else "unknown"
+
+                if conf < settings.min_ball_confidence:
+                    continue
+
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
+                radius = max((x2 - x1), (y2 - y1)) / 2.0
+
+                balls.append(
+                    BallDetection(
+                        x=int(cx),
+                        y=int(cy),
+                        radius=float(radius),
+                        color_name=class_name,
+                        confidence=float(conf),
+                        circularity=0.0,
+                    )
+                )
+            return balls
+        except Exception as e:
+            print(f"YOLO inference failed: {e}. Falling back to HSV.")
+            # Fall through to HSV method if YOLO fails at runtime
+
+    # Fallback to original contour-based method
+    print("Using HSV color detection for balls.")
     hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
     ballMask = build_ball_mask(hsv_frame, orange_range=orange_range, white_range=white_range)
     sat_split = settings.white_sat_split if white_sat_split is None else white_sat_split

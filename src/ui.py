@@ -89,20 +89,60 @@ def annotate(
             cv.circle(out, pt, 5, (0, 255, 0), -1)
             cv.putText(out, f"C{i+1}", (pt[0]+10, pt[1]+10), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-    # Mark the small goal
+    # Mark the small goal and its approach/delivery points
     if small_goal is not None:
-        goal_color = (255, 0, 255)  # pink
-        cv.circle(out, (small_goal.x, small_goal.y), 25, goal_color, 4)
-        cv.circle(out, (small_goal.x, small_goal.y), 6, goal_color, -1)
+        # Draw the true goal center
+        goal_color = (255, 0, 255)  # Magenta for the true goal
+        cv.circle(out, (small_goal.x, small_goal.y), 15, goal_color, 2)
+        cv.circle(out, (small_goal.x, small_goal.y), 4, goal_color, -1)
         cv.putText(
             out,
             f"Small Goal ({small_goal.x},{small_goal.y})",
-            (small_goal.x - 160, small_goal.y - 20),
+            (small_goal.x - 170, small_goal.y - 15),
             cv.FONT_HERSHEY_SIMPLEX,
-            0.7,
+            0.6,
             goal_color,
             2,
         )
+
+        alignment_point = None
+        delivery_point = None
+
+        # Draw the alignment point
+        if small_goal.alignment_point_x is not None and small_goal.alignment_point_y is not None:
+            alignment_point = (small_goal.alignment_point_x, small_goal.alignment_point_y)
+            alignment_color = (0, 255, 0)  # Green for the alignment point
+            cv.circle(out, alignment_point, 10, alignment_color, -1)
+            cv.putText(
+                out,
+                f"Alignment ({alignment_point[0]},{alignment_point[1]})",
+                (alignment_point[0] - 120, alignment_point[1] + 25),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                alignment_color,
+                2,
+            )
+            cv.line(out, alignment_point, (small_goal.x, small_goal.y), (255, 255, 255), 1)
+
+        # Draw the delivery point
+        if small_goal.delivery_point_x is not None and small_goal.delivery_point_y is not None:
+            delivery_point = (small_goal.delivery_point_x, small_goal.delivery_point_y)
+            delivery_color = (255, 0, 128)  # Purple for the delivery point
+            cv.circle(out, delivery_point, 10, delivery_color, -1)
+            cv.putText(
+                out,
+                f"Delivery ({delivery_point[0]},{delivery_point[1]})",
+                (delivery_point[0] - 110, delivery_point[1] + 25),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                delivery_color,
+                2,
+            )
+
+        if alignment_point is not None and delivery_point is not None:
+            cv.line(out, alignment_point, delivery_point, (255, 255, 255), 1)
+            cv.arrowedLine(out, delivery_point, (small_goal.x, small_goal.y), (255, 255, 255), 1, tipLength=0.25)
+
     else:
         cv.putText(out, "Small Goal: NOT DETECTED", (10, 140),
                    cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)

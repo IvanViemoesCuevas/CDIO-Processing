@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Settings:
-    host: str = "172.20.10.2"
+    host: str = "172.20.10.9"
     port: int = 12345
     send_interval_sec: float = 0.12
     stable_frames_required: int = 2
@@ -31,7 +31,8 @@ class Settings:
     
     # Goal detection settings
     min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
-    delivery_point_offset_px: int = 40 # How far from the goal line to set the delivery point
+    alignment_point_offset_px: int = 280 # Move alignment point further left from the goal line
+    delivery_point_offset_px: int = 130 # Move delivery point further left from the goal line
 
 
 # (Hue, Saturation, brightness)

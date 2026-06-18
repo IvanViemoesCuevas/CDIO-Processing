@@ -52,6 +52,7 @@ class NavigationContext:
     balls_count: int
     candidate_target_visible: bool
     handoff_manager: Optional["BallHandoffManager"] = None
+    small_goal: Optional["GoalDetection"] = None
 
 
 @dataclass
@@ -59,6 +60,8 @@ class NavigationState:
     candidate_target: Optional[BallDetection] = None
     hold_command_until: float = 0.0
     last_target_seen_time: float = 0.0
+    handoff_phase: str = "idle"  # idle, approaching_alignment, aligning, midway_pause, approaching_delivery, delivering, done
+    last_command: str = ""
 
 
 @dataclass
@@ -72,9 +75,12 @@ class GoalDetection:
     """Represents a detected goal with position and size information."""
     x: int
     y: int
-    size_category: str  # "large" for left goal, "small" for right goal
-    confidence: float = 1.0  # Geometry-based, should be high
-    delivery_x: Optional[int] = None
+    size_category: str
+    confidence: float = 1.0
+    alignment_point_x: Optional[int] = None
+    alignment_point_y: Optional[int] = None
+    delivery_point_x: Optional[int] = None
+    delivery_point_y: Optional[int] = None
 
 
 @dataclass
