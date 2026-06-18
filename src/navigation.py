@@ -236,7 +236,7 @@ def decide_command(
                 state.handoff_phase = "delivering"
                 state.hold_command_until = context.now + 10.0 # Unload time
                 print("Handoff: Arrived at delivery point. Phase -> delivering")
-                return NavigationResult(CMD_UNLOAD, "handoff:start_unload"), state
+                return NavigationResult(CMD_SWITCH, "handoff:start_unload"), state
             return res, state
 
         # --- Phase: delivering ---

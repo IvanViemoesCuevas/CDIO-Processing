@@ -31,8 +31,8 @@ class Settings:
 
     # Goal detection settings
     min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
-    alignment_point_offset_px: int = 280 # Move alignment point further left from the goal line
-    delivery_point_offset_px: int = 130 # Move delivery point further left from the goal line
+    alignment_point_offset_px: int = 320 # Move alignment point further left from the goal line
+    delivery_point_offset_px: int = 165 # Move delivery point further left from the goal line
 
 
 # (Hue, Saturation, brightness)

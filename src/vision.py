@@ -386,11 +386,11 @@ def detect_balls(
                     except Exception:
                         cls = -1
 
-        class_name = str(names.get(cls, "unknown")) if names is not None else "unknown"
+                class_name = str(names.get(cls, "unknown")) if names is not None else "unknown"
 
-        # Filter by configured confidence threshold
-        if conf < settings.min_ball_confidence:
-            continue
+                # Filter by configured confidence threshold
+                if conf < settings.min_ball_confidence:
+                    continue
 
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2

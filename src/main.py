@@ -6,7 +6,7 @@ import platform
 
 from config import *
 from robot_client import RobotClient
-from models import NavigationContext, NavigationState, GoalDetection, BallDetection
+from models import NavigationContext, NavigationState, GoalDetection
 from navigation import decide_command
 from ui import annotate
 from vision import (
@@ -20,7 +20,6 @@ from vision import (
     make_ball_debug_view,
     match_candidate_target,
     detect_field_corners,
-    find_small_goal,
 )
 
 
