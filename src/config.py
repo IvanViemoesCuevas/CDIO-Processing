@@ -1,6 +1,11 @@
 # Constants & settings
 from dataclasses import dataclass
 
+FIELD_WIDTH_CM = 178.0
+FIELD_HEIGHT_CM = 133.0
+PERSPECTIVE_PADDING_PX = 40
+
+
 @dataclass
 class Settings:
     host: str = "172.20.10.2"
@@ -19,23 +24,24 @@ class Settings:
     white_sat_split: float = 80.0
 
     # Aligning and arrival of the robot
-    align_deadband_px: int = 35
-    target_radius_px: float = 38.0
+    align_deadband_cm: float = 8.0
+    target_radius_cm: float = 2.0
     commit_forward_window_sec: float = 3  # TODO tweak
     pose_turn_deadband_deg: float = 5.0
-    pose_arrival_distance_px: float = 110.0
 
     # Danger detection
     min_obstacle_area: int = 400
-    danger_center_deadband_px: int = 60
-    danger_distance_px: float = 35.0
-    danger_too_close_px: float = 35.0
-    danger_rear_ignore_px: float = 35.0
+    danger_center_deadband_cm: float = 15.0
+    danger_distance_cm: float = 15.0
+    danger_too_close_cm: float = 10.0
+    danger_rear_ignore_cm: float = 10.0
+    pose_turn_deadband_deg: float = 8.0
+    pose_arrival_distance_cm: float = 20.0
 
     # Goal detection settings
     min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
-    alignment_point_offset_px: int = 320 # Move alignment point further left from the goal line
-    delivery_point_offset_px: int = 165 # Move delivery point further left from the goal line
+    alignment_point_offset_cm: float = 45.0 # Move alignment point further left from the goal line
+    delivery_point_offset_cm: float = 25.0 # Move delivery point further left from the goal line
 
 
 # (Hue, Saturation, brightness)

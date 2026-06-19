@@ -7,7 +7,7 @@ import platform
 from config import *
 from robot_client import RobotClient
 from models import NavigationContext, NavigationState, GoalDetection
-from navigation import decide_command
+from navigation import decide_command, get_scales
 from ui import annotate
 from vision import (
     BallDetectionTuner,
@@ -119,9 +119,10 @@ def main() -> int:
                 goal_x = int((tr[0] + br[0]) / 2)
                 goal_y = int((tr[1] + br[1]) / 2)
 
-                # Calculate alignment and delivery points
-                alignment_x = goal_x - settings.alignment_point_offset_px
-                delivery_x = goal_x - settings.delivery_point_offset_px
+                # Calculate alignment and delivery points dynamically using get_scales
+                scale_x, scale_y = get_scales(frame.shape[1], frame.shape[0])
+                alignment_x = goal_x - int(settings.alignment_point_offset_cm * scale_x)
+                delivery_x = goal_x - int(settings.delivery_point_offset_cm * scale_x)
 
                 cached_small_goal = GoalDetection(
                     x=goal_x,
@@ -188,6 +189,7 @@ def main() -> int:
             decision, nav_state = decide_command(
                 context=NavigationContext(
                     frame_width=frame.shape[1],
+                    frame_height=frame.shape[0],
                     target_ball=target_ball,
                     danger=danger,
                     robot_pose=robot_pose,

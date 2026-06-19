@@ -104,23 +104,37 @@ def corrected_robot_pose_values(robot_pose, frame_width: int | None = None, fram
         normalized_y,
     )
 
-def decide_immediate_command(context: NavigationContext, settings: Settings, state: NavigationState, arrival_distance_px=None, turn_deadband_deg=None) -> NavigationResult:
+def get_scales(frame_width: int, frame_height: int) -> tuple[float, float]:
+    width = frame_width - 2 * PERSPECTIVE_PADDING_PX
+    height = frame_height - 2 * PERSPECTIVE_PADDING_PX
+    scale_x = width / FIELD_WIDTH_CM
+    scale_y = height / FIELD_HEIGHT_CM
+    return scale_x, scale_y
+
+
+def decide_immediate_command(
+    context: NavigationContext,
+    settings: Settings,
+    state: NavigationState,
+    arrival_distance_cm=None,
+    turn_deadband_deg=None
+) -> NavigationResult:
     danger = context.danger
     danger_state = context.danger_state
     target_ball = context.target_ball
 
     # Use specific tolerances for handoff, otherwise use defaults
-    arrival_dist = arrival_distance_px if arrival_distance_px is not None else settings.pose_arrival_distance_px
+    arrival_dist = arrival_distance_cm if arrival_distance_cm is not None else settings.pose_arrival_distance_cm
     turn_deadband = turn_deadband_deg if turn_deadband_deg is not None else settings.pose_turn_deadband_deg
 
     if danger_state is not None and danger_state.too_close:
-        if abs(danger_state.nearest_dx_body) <= float(settings.danger_center_deadband_px):
-            return NavigationResult(CMD_STOP, f"danger:too_close d={danger_state.nearest_distance_px:.0f}")
-        if danger_state.nearest_dy_body < -float(settings.danger_rear_ignore_px):
-            return NavigationResult(CMD_FORWARD, f"danger:avoid_back d={danger_state.nearest_distance_px:.0f}")
+        if abs(danger_state.nearest_dx_body) <= float(settings.danger_center_deadband_cm):
+            return NavigationResult(CMD_STOP, f"danger:too_close d={danger_state.nearest_distance_cm:.1f}")
+        if danger_state.nearest_dy_body < -float(settings.danger_rear_ignore_cm):
+            return NavigationResult(CMD_FORWARD, f"danger:avoid_back d={danger_state.nearest_distance_cm:.1f}")
         if danger_state.nearest_dx_body < 0.0:
-            return NavigationResult(CMD_RIGHT, f"danger:avoid_left d={danger_state.nearest_distance_px:.0f}")
-        return NavigationResult(CMD_LEFT, f"danger:avoid_right d={danger_state.nearest_distance_px:.0f}")
+            return NavigationResult(CMD_RIGHT, f"danger:avoid_left d={danger_state.nearest_distance_cm:.1f}")
+        return NavigationResult(CMD_LEFT, f"danger:avoid_right d={danger_state.nearest_distance_cm:.1f}")
 
     if danger.front and danger.center:
         return NavigationResult(CMD_BACKWARD, "danger:front")
@@ -137,11 +151,10 @@ def decide_immediate_command(context: NavigationContext, settings: Settings, sta
         return NavigationResult(CMD_STOP, "no_ball")
 
     if context.robot_pose is not None:
-        frame_height = getattr(context, "frame_height", None)
         robot_x, robot_y, robot_heading, *_ = corrected_robot_pose_values(
             context.robot_pose,
             frame_width=context.frame_width,
-            frame_height=frame_height,
+            frame_height=context.frame_height,
         )
 
         dx = float(target_ball.x - robot_x)
@@ -149,7 +162,11 @@ def decide_immediate_command(context: NavigationContext, settings: Settings, sta
         target_heading = math.atan2(dy, dx)
         heading_error = normalize_angle_rad(target_heading - robot_heading)
         heading_error_deg = math.degrees(heading_error)
-        distance_px = math.hypot(dx, dy)
+
+        scale_x, scale_y = get_scales(context.frame_width, context.frame_height)
+        dx_cm = dx / scale_x
+        dy_cm = dy / scale_y
+        distance_cm = math.hypot(dx_cm, dy_cm)
 
         # Hysteresis for turning
         turn_hysteresis_factor = 1.5
@@ -162,20 +179,24 @@ def decide_immediate_command(context: NavigationContext, settings: Settings, sta
         if heading_error_deg > effective_turn_deadband:
             return NavigationResult(CMD_RIGHT, f"pose:right err={heading_error_deg:.1f}")
 
-        if distance_px > arrival_dist:
-            return NavigationResult(CMD_FORWARD, f"pose:forward d={distance_px:.0f}")
+        if distance_cm > arrival_dist:
+            return NavigationResult(CMD_FORWARD, f"pose:forward d={distance_cm:.1f}")
 
-        return NavigationResult(CMD_STOP, f"pose:arrived d={distance_px:.0f}")
+        return NavigationResult(CMD_STOP, f"pose:arrived d={distance_cm:.1f}")
 
     else:
+        scale_x, scale_y = get_scales(context.frame_width, context.frame_height)
+        align_deadband_px = settings.align_deadband_cm * scale_x
+        target_radius_px = settings.target_radius_cm * scale_x
+
         center_x = context.frame_width // 2
         error_x = target_ball.x - center_x
 
-        if error_x < -settings.align_deadband_px:
+        if error_x < -align_deadband_px:
             return NavigationResult(CMD_LEFT, f"track:{target_ball.color_name}:left")
-        if error_x > settings.align_deadband_px:
+        if error_x > align_deadband_px:
             return NavigationResult(CMD_RIGHT, f"track:{target_ball.color_name}:right")
-        if target_ball.radius < settings.target_radius_px:
+        if target_ball.radius < target_radius_px:
             return NavigationResult(CMD_FORWARD, f"track:{target_ball.color_name}:forward")
         return NavigationResult(CMD_STOP, f"track:{target_ball.color_name}:arrived")
 
@@ -197,9 +218,15 @@ def decide_command(
 
         # --- Phase: approaching_alignment ---
         if state.handoff_phase == "approaching_alignment":
-            alignment_target = BallDetection(x=context.small_goal.alignment_point_x, y=context.small_goal.alignment_point_y, radius=settings.pose_arrival_distance_px, color_name="align_pt", confidence=1.0)
+            alignment_target = BallDetection(
+                x=context.small_goal.alignment_point_x,
+                y=context.small_goal.alignment_point_y,
+                radius=settings.pose_arrival_distance_cm,
+                color_name="align_pt",
+                confidence=1.0
+            )
             nav_context = replace(context, target_ball=alignment_target)
-            res = decide_immediate_command(nav_context, settings, state, arrival_distance_px=50) # Tighter arrival
+            res = decide_immediate_command(nav_context, settings, state, arrival_distance_cm=9.0) # Tighter arrival
             if "arrived" in res.reason:
                 state.handoff_phase = "aligning"
                 state.hold_command_until = context.now + 1.0 # Longer pause
@@ -228,9 +255,15 @@ def decide_command(
             if state.hold_command_until > context.now:
                 return NavigationResult(CMD_STOP, "handoff:pausing"), state
 
-            delivery_target = BallDetection(x=context.small_goal.delivery_point_x, y=context.small_goal.delivery_point_y, radius=settings.pose_arrival_distance_px, color_name="delivery_pt", confidence=1.0)
+            delivery_target = BallDetection(
+                x=context.small_goal.delivery_point_x,
+                y=context.small_goal.delivery_point_y,
+                radius=settings.pose_arrival_distance_cm,
+                color_name="delivery_pt",
+                confidence=1.0
+            )
             nav_context = replace(context, target_ball=delivery_target)
-            res = decide_immediate_command(nav_context, settings, state, arrival_distance_px=50) # Tighter arrival
+            res = decide_immediate_command(nav_context, settings, state, arrival_distance_cm=9.0) # Tighter arrival
 
             if "arrived" in res.reason:
                 state.handoff_phase = "delivering"
