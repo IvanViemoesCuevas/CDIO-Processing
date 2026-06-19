@@ -27,7 +27,7 @@ class Settings:
     align_deadband_cm: float = 8.0
     target_radius_cm: float = 2.0
     commit_forward_window_sec: float = 3  # TODO tweak
-    pose_turn_deadband_deg: float = 8.0
+    pose_turn_deadband_deg: float = 5.0
     pose_arrival_distance_cm: float = 20.0
 
     # Danger detection
