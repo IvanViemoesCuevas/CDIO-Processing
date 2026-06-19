@@ -46,7 +46,7 @@ def main() -> int:
 
     # Get the video capture
     if platform.system() == "Windows":
-        cap0 = cv.VideoCapture(0, cv.CAP_DSHOW)
+        cap0 = cv.VideoCapture(1, cv.CAP_DSHOW)
     else:
         cap0 = cv.VideoCapture(0)
 
