@@ -59,7 +59,7 @@ def annotate(
                 (255, 0, 255),
                 2,
             )
-    """
+
     # Mark the detected balls
     for b in balls:
         ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
@@ -87,7 +87,6 @@ def annotate(
             color,
             2,
         )
-        """
 
     # Mark field corners (this is the green overlay)
     if field_corners is not None:

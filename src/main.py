@@ -25,7 +25,7 @@ from vision import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="172.20.10.9", help="Robot IP/hostname")
+    parser.add_argument("--host", default="172.20.10.2", help="Robot IP/hostname")
     parser.add_argument("--port", type=int, default=12345, help="Robot TCP port")
     parser.add_argument("--dry-run", action="store_true", help="Do not open socket; only print decisions")
     parser.add_argument(
@@ -78,6 +78,7 @@ def main() -> int:
     candidate_count = 0
     last_send_command: Optional[str] = None
     last_send_time = 0.0
+    manual_override_until = 0.0
 
     # Setup navigation state variables
     nav_state = NavigationState()
@@ -251,7 +252,7 @@ def main() -> int:
                     ),
                 )
 
-            # Check for the quit key
+            # Check for manual key
             key = cv.waitKey(1) & 0xFF
             if key == ord('q'):
                 if client is not None:
@@ -260,6 +261,18 @@ def main() -> int:
             elif key == ord('x'):
                 if client is not None:
                     client.send_char(CMD_SWITCH)
+            elif key == ord('i'):
+                if client is not None:
+                    client.send_char(CMD_FORWARD)
+            elif key == ord('k'):
+                if client is not None:
+                    client.send_char(CMD_BACKWARD)
+            elif key == ord('j'):
+                if client is not None:
+                    client.send_char(CMD_LEFT)
+            elif key == ord('l'):
+                if client is not None:
+                    client.send_char(CMD_RIGHT)
 
     finally:
         cap0.release()
