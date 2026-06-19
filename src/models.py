@@ -34,7 +34,7 @@ class DangerFlags:
 
 @dataclass
 class DangerState:
-    nearest_distance_px: float = float("inf")
+    nearest_distance_cm: float = float("inf")
     nearest_point: Optional[tuple[int, int]] = None
     nearest_dx_body: float = 0.0
     nearest_dy_body: float = 0.0
@@ -44,6 +44,7 @@ class DangerState:
 @dataclass
 class NavigationContext:
     frame_width: int
+    frame_height: int
     target_ball: Optional[BallDetection]
     danger: DangerFlags
     robot_pose: Optional[RobotPose]

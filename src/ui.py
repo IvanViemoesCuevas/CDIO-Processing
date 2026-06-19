@@ -19,6 +19,7 @@ from navigation import (
     MARKER_TO_DRIVE_CENTER_RIGHT_PX,
     MARKER_PERSPECTIVE_FORWARD_GAIN,
     MARKER_PERSPECTIVE_RIGHT_GAIN,
+    get_scales,
 )
 
 def draw_robot_footprint(frame: np.ndarray, x: float, y: float, heading_rad: float, length_px: float, width_px: float) -> None:
@@ -247,6 +248,11 @@ def annotate(
             heading_error_deg = math.degrees(heading_error)
             distance_px = math.hypot(dx, dy)
 
+            scale_x, scale_y = get_scales(out.shape[1], out.shape[0])
+            dx_cm = dx / scale_x
+            dy_cm = dy / scale_y
+            distance_cm = math.hypot(dx_cm, dy_cm)
+
             cv.line(out, robot_point, (target_ball.x, target_ball.y), (255, 0, 255), 2)
             cv.circle(out, (target_ball.x, target_ball.y), 5, (255, 0, 255), -1)
 
@@ -255,7 +261,7 @@ def annotate(
             ty2 = int(robot_y + target_arrow_len * math.sin(target_heading))
             cv.arrowedLine(out, robot_point, (tx2, ty2), (255, 0, 255), 2, tipLength=0.25)
 
-            debug_lines.append(f"target=({target_ball.x},{target_ball.y}) dx={dx:.0f} dy={dy:.0f} d={distance_px:.0f}px")
+            debug_lines.append(f"target=({target_ball.x},{target_ball.y}) dx={dx_cm:.1f} dy={dy_cm:.1f} d={distance_cm:.1f}cm")
             debug_lines.append(f"target_heading={math.degrees(target_heading):.1f}deg err={heading_error_deg:.1f}deg")
             debug_lines.append(
                 f"calib heading_offset={MARKER_HEADING_OFFSET_DEG:.1f}deg base_fwd={MARKER_TO_DRIVE_CENTER_FORWARD_PX:.0f}px base_right={MARKER_TO_DRIVE_CENTER_RIGHT_PX:.0f}px"
@@ -302,7 +308,7 @@ def annotate(
 
     if danger_state is not None and danger_state.nearest_point is not None:
         cv.circle(out, danger_state.nearest_point, 5, (0, 165, 255), -1)
-        danger_text = f"nearest_danger={danger_state.nearest_distance_px:.1f}px"
+        danger_text = f"nearest_danger={danger_state.nearest_distance_cm:.1f}cm"
         cv.putText(out, danger_text, (10, out.shape[0] - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
     # Add the command info to the screen

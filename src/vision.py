@@ -34,7 +34,7 @@ _yolo_model = None
 PERSPECTIVE_OUTPUT_SIZE: tuple[int, int] | None = None
 
 # Increase this if the warped image cuts off the border/corners.
-PERSPECTIVE_PADDING_PX = 40
+# (Imported from config.py)
 
 PERSPECTIVE_UPDATE_INTERVAL = 5
 PERSPECTIVE_SMOOTHING = 0.9
@@ -563,12 +563,20 @@ def detect_danger_zones(
         return flags, state, filtered_mask, kept_contours
 
     if robot_pose is not None:
+        width = w - 2 * PERSPECTIVE_PADDING_PX
+        height = h - 2 * PERSPECTIVE_PADDING_PX
+        scale_x = width / FIELD_WIDTH_CM
+        scale_y = height / FIELD_HEIGHT_CM
+
         dx_img: NDArray[np.float32] = np.asarray(xs, dtype=np.float32) - np.float32(robot_pose.x)
         dy_img: NDArray[np.float32] = np.asarray(ys, dtype=np.float32) - np.float32(robot_pose.y)
-        dist2: NDArray[np.float32] = dx_img * dx_img + dy_img * dy_img
-        nearest_index = int(np.argmin(dist2))
+        
+        dx_cm = dx_img / scale_x
+        dy_cm = dy_img / scale_y
+        dist2_cm: NDArray[np.float32] = dx_cm * dx_cm + dy_cm * dy_cm
+        nearest_index = int(np.argmin(dist2_cm))
 
-        state.nearest_distance_px = float(np.sqrt(dist2[nearest_index]))
+        state.nearest_distance_cm = float(np.sqrt(dist2_cm[nearest_index]))
         state.nearest_point = (int(xs[nearest_index]), int(ys[nearest_index]))
 
         heading_x = math.cos(robot_pose.heading_rad)
@@ -576,30 +584,30 @@ def detect_danger_zones(
         right_x = -heading_y
         right_y = heading_x
 
-        forward_body: NDArray[np.float32] = np.asarray(
-            dx_img * np.float32(heading_x) + dy_img * np.float32(heading_y),
+        forward_body_cm: NDArray[np.float32] = np.asarray(
+            dx_cm * np.float32(heading_x) + dy_cm * np.float32(heading_y),
             dtype=np.float32,
         )
-        right_body: NDArray[np.float32] = np.asarray(
-            dx_img * np.float32(right_x) + dy_img * np.float32(right_y),
+        right_body_cm: NDArray[np.float32] = np.asarray(
+            dx_cm * np.float32(right_x) + dy_cm * np.float32(right_y),
             dtype=np.float32,
         )
 
-        near = dist2 <= float(settings.danger_distance_px * settings.danger_distance_px)
+        near = dist2_cm <= float(settings.danger_distance_cm * settings.danger_distance_cm)
         if np.any(near):
-            forward_near = forward_body[near]
-            right_near = right_body[near]
-            flags.front = bool(np.any(forward_near > float(settings.danger_center_deadband_px)))
-            flags.back = bool(np.any(forward_near < -float(settings.danger_center_deadband_px)))
-            flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_px)))
-            flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_px)))
-            flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_px)))
+            forward_near = forward_body_cm[near]
+            right_near = right_body_cm[near]
+            flags.front = bool(np.any(forward_near > float(settings.danger_center_deadband_cm)))
+            flags.back = bool(np.any(forward_near < -float(settings.danger_center_deadband_cm)))
+            flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_cm)))
+            flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_cm)))
+            flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_cm)))
 
-        state.nearest_dx_body = float(right_body[nearest_index])
-        state.nearest_dy_body = float(forward_body[nearest_index])
+        state.nearest_dx_body = float(right_body_cm[nearest_index])
+        state.nearest_dy_body = float(forward_body_cm[nearest_index])
         state.too_close = (
-                state.nearest_distance_px <= float(settings.danger_too_close_px)
-                and state.nearest_dy_body >= -float(settings.danger_rear_ignore_px)
+                state.nearest_distance_cm <= float(settings.danger_too_close_cm)
+                and state.nearest_dy_body >= -float(settings.danger_rear_ignore_cm)
         )
     else:
         zone_h = max(1, h // 3)
