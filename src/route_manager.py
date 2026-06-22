@@ -364,21 +364,27 @@ class RouteManager:
                         wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=8.0)
                         if wp is not None:
                             wp_x, wp_y = wp
-                            wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
-                            wp_px_y = int(round(PERSPECTIVE_PADDING_PX + wp_y * scale_y))
-                            wp_ball = BallDetection(
-                                x=wp_px_x,
-                                y=wp_px_y,
-                                radius=12.0,
-                                color_name="waypoint",
-                                confidence=1.0,
-                                circularity=1.0
-                            )
-                            self.queue.insert(0, wp_ball)
-                            print(f"[RouteManager] Dynamic insertion of bypass waypoint at ({wp_px_x}, {wp_px_y})")
-                            target = wp_ball
-                            t_x_cm, t_y_cm = wp_x, wp_y
-                            dist_to_target = math.hypot(t_x_cm - r_x_cm, t_y_cm - r_y_cm)
+                            # Only insert if the waypoint is not already extremely close to the robot
+                            # Use a safety threshold slightly larger than waypoint_arrival_distance_cm (e.g. 12.0 cm)
+                            waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
+                            if math.hypot(wp_x - r_x_cm, wp_y - r_y_cm) > (waypoint_arrival_dist + 4.0):
+                                wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
+                                wp_px_y = int(round(PERSPECTIVE_PADDING_PX + wp_y * scale_y))
+                                wp_ball = BallDetection(
+                                    x=wp_px_x,
+                                    y=wp_px_y,
+                                    radius=12.0,
+                                    color_name="waypoint",
+                                    confidence=1.0,
+                                    circularity=1.0
+                                )
+                                self.queue.insert(0, wp_ball)
+                                print(f"[RouteManager] Dynamic insertion of bypass waypoint at ({wp_px_x}, {wp_px_y})")
+                                target = wp_ball
+                                t_x_cm, t_y_cm = wp_x, wp_y
+                                dist_to_target = math.hypot(t_x_cm - r_x_cm, t_y_cm - r_y_cm)
+                            else:
+                                print(f"[RouteManager] Skip dynamic insertion: generated waypoint at ({wp_x:.1f}, {wp_y:.1f}) is too close to robot ({r_x_cm:.1f}, {r_y_cm:.1f}).")
                 
                 if target.color_name != "waypoint" and dist_to_target < 30.0:
                     # Is target currently matched by any detection?
