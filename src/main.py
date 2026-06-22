@@ -6,8 +6,8 @@ import platform
 
 from config import *
 from robot_client import RobotClient
-from models import NavigationContext, NavigationState, GoalDetection
-from navigation import decide_command, get_scales
+from models import NavigationContext, NavigationState, GoalDetection, RobotPose
+from navigation import decide_command, get_scales, corrected_robot_pose_values
 from ui import annotate
 from vision import (
     BallDetectionTuner,
@@ -138,9 +138,21 @@ def main() -> int:
                 print(f"Alignment point: ({cached_small_goal.alignment_point_x}, {cached_small_goal.alignment_point_y})")
                 print(f"Delivery point: ({cached_small_goal.delivery_point_x}, {cached_small_goal.delivery_point_y})")
 
-
-            # Other detections (unchanged)
             robot_pose = detect_robot_pose(frame, settings)
+            danger_robot_pose = robot_pose
+
+            if robot_pose is not None:
+                corrected_x, corrected_y, corrected_heading, *_ = corrected_robot_pose_values(
+                    robot_pose,
+                    frame_width=frame.shape[1],
+                    frame_height=frame.shape[0],
+                )
+                danger_robot_pose = RobotPose(
+                    x=int(round(corrected_x)),
+                    y=int(round(corrected_y)),
+                    heading_rad=corrected_heading,
+                    confidence=robot_pose.confidence,
+                )
 
             tuning = tuner.read() if tuner is not None else default_tuning
 
@@ -152,7 +164,7 @@ def main() -> int:
                 white_range=tuning.white_range,
                 white_sat_split=tuning.white_sat_split,
             )
-            danger, danger_state, _, danger_contours = detect_danger_zones(frame, settings, robot_pose)
+            danger, danger_state, _, danger_contours = detect_danger_zones(frame, settings, danger_robot_pose)
 
             # Update handoff manager and check for handoff condition
             handoff_manager.update(balls)
