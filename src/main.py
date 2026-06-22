@@ -293,16 +293,21 @@ def main() -> int:
 
             # --- Command Sending (unchanged) ---
             now_time = time.time()
+            is_one_shot_switch = command == CMD_SWITCH and reason == "handoff:start_unload"
             should_send = (
-                candidate_count >= settings.stable_frames_required
-                and now_time - last_send_time >= settings.send_interval_sec
+                is_one_shot_switch
+                or (
+                    candidate_count >= settings.stable_frames_required
+                    and now_time - last_send_time >= settings.send_interval_sec
+                )
             )
 
             if should_send and candidate_command is not None:
+                command_to_send = command if is_one_shot_switch else candidate_command
                 if client is not None:
-                    client.send_char(candidate_command)
-                print(f"sent={candidate_command} reason={reason}")
-                last_send_command = candidate_command
+                    client.send_char(command_to_send)
+                print(f"sent={command_to_send} reason={reason}")
+                last_send_command = command_to_send
                 last_send_time = now_time
 
             # Annotate frame with detections and command
