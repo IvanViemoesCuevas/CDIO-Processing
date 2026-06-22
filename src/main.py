@@ -26,7 +26,7 @@ from vision import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="172.20.10.2", help="Robot IP/hostname")
+    parser.add_argument("--host", default="172.20.10.9", help="Robot IP/hostname")
     parser.add_argument("--port", type=int, default=12345, help="Robot TCP port")
     parser.add_argument("--dry-run", action="store_true", help="Do not open socket; only print decisions")
     parser.add_argument(
