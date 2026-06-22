@@ -162,6 +162,7 @@ def main() -> int:
             handoff_manager.update(balls)
 
             # Decide target and command override from RouteManager
+            prev_route_state = route_manager.state
             scale_x, scale_y = get_scales(frame.shape[1], frame.shape[0])
             now = time.monotonic()
             
@@ -173,9 +174,10 @@ def main() -> int:
                 scale_x=scale_x,
                 scale_y=scale_y,
                 settings=settings,
-                current_danger_contours=danger_contours
+                current_danger_contours=danger_contours,
+                small_goal=cached_small_goal
             )
-
+ 
             # Check waypoint arrival BEFORE deciding command to prevent sending CMD_STOP
             if route_manager.state == "executing" and robot_pose is not None:
                 import math
@@ -206,10 +208,17 @@ def main() -> int:
                             scale_x=scale_x,
                             scale_y=scale_y,
                             settings=settings,
-                            current_danger_contours=danger_contours
+                            current_danger_contours=danger_contours,
+                            small_goal=cached_small_goal
                         )
                     else:
                         break
+ 
+            # Handle conveyor belt toggle when starting a new run
+            if prev_route_state == "re_evaluating" and route_manager.state == "scanning":
+                print("[main] Re-evaluation triggered new run. Toggling conveyor belt back to collection mode.")
+                if client is not None:
+                    client.send_char(CMD_SWITCH)
 
             # Manage handoff transitions in main loop
             if route_manager.state == "handoff":
