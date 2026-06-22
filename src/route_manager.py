@@ -13,18 +13,13 @@ def ccw(A, B, C):
 def segments_intersect(p1, p2, p3, p4):
     return ccw(p1, p3, p4) != ccw(p2, p3, p4) and ccw(p1, p2, p3) != ccw(p1, p2, p4)
 
-def segment_intersects_box(xa, ya, xb, yb, box, margin=15.0):
+def segment_intersects_box(xa, ya, xb, yb, box, margin=8.0):
     x1, y1, x2, y2 = box
     x1_pad = x1 - margin
     y1_pad = y1 - margin
     x2_pad = x2 + margin
     y2_pad = y2 + margin
     
-    if (x1_pad <= xa <= x2_pad) and (y1_pad <= ya <= y2_pad):
-        return True
-    if (x1_pad <= xb <= x2_pad) and (y1_pad <= yb <= y2_pad):
-        return True
-        
     p1 = (xa, ya)
     p2 = (xb, yb)
     if segments_intersect(p1, p2, (x1_pad, y1_pad), (x1_pad, y2_pad)):
@@ -50,13 +45,13 @@ def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, fr
         obstacles.append((x1, y1, x2, y2))
     return obstacles
 
-def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=15.0):
+def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=8.0):
     for obs in obstacles:
         if segment_intersects_box(xa, ya, xb, yb, obs, margin):
             return obs
     return None
 
-def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=15.0) -> Optional[tuple[float, float]]:
+def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0) -> Optional[tuple[float, float]]:
     x1, y1, x2, y2 = obstacle
     x1_pad = x1 - margin
     y1_pad = y1 - margin
@@ -277,9 +272,9 @@ class RouteManager:
                 target_x_cm = (target.x - PERSPECTIVE_PADDING_PX) / scale_x
                 target_y_cm = (target.y - PERSPECTIVE_PADDING_PX) / scale_y
                 
-                obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles, margin=15.0)
+                obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles, margin=8.0)
                 if obs is not None:
-                    wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs, margin=15.0)
+                    wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs, margin=8.0)
                     if wp is not None:
                         wp_x, wp_y = wp
                         wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
@@ -348,30 +343,8 @@ class RouteManager:
                     self.queue[best_match_idx].y = db.y
                     matched_queued_indices.add(best_match_idx)
                 else:
-                    # Check if it was already visited
-                    already_visited = False
-                    for vx, vy in self.visited_positions:
-                        if math.hypot(db_x_cm - vx, db_y_cm - vy) < 15.0:
-                            already_visited = True
-                            break
-                    
-                    if not already_visited:
-                        # New ball detected! Add it to the queue
-                        new_ball = BallDetection(
-                            x=db.x,
-                            y=db.y,
-                            radius=12.0,
-                            color_name=db.color_name,
-                            confidence=1.0,
-                            circularity=1.0
-                        )
-                        # Ensure orange ball stays last
-                        if self.queue and self.queue[-1].color_name == "orange":
-                            self.queue.insert(len(self.queue) - 1, new_ball)
-                            print(f"[RouteManager] Added new {db.color_name} ball before orange ball.")
-                        else:
-                            self.queue.append(new_ball)
-                            print(f"[RouteManager] Added new {db.color_name} ball at end of queue.")
+                    # Do not dynamically add new balls to the queue during the run
+                    pass
             
             # --- Check if Target Ball is Still There & Dynamic Waypoint Check ---
             if robot_pose is not None:
@@ -386,9 +359,9 @@ class RouteManager:
                     frame_width = danger_mask.shape[1] if danger_mask is not None else 1280
                     frame_height = danger_mask.shape[0] if danger_mask is not None else 960
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
-                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=15.0)
+                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=8.0)
                     if obs is not None:
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=15.0)
+                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=8.0)
                         if wp is not None:
                             wp_x, wp_y = wp
                             wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
