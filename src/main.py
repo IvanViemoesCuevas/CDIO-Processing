@@ -243,7 +243,12 @@ def main() -> int:
                 command = decision.command
                 reason = decision.reason
                 if "arrived" in reason and route_manager.state == "executing":
-                    route_manager.state = "commit"
+                    if target_ball is not None and target_ball.color_name == "waypoint":
+                        if route_manager.queue:
+                            route_manager.queue.pop(0)
+                        print("[main] Arrived at waypoint. Proceeding to next target.")
+                    else:
+                        route_manager.state = "commit"
 
             if command == candidate_command:
                 candidate_count += 1

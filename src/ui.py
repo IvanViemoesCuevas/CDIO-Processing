@@ -109,24 +109,41 @@ def annotate(
                 cv.line(out, pts[i], pts[i+1], (255, 255, 0), 2, cv.LINE_AA)
 
             # 3. Draw queue order numbers
+            # 3. Draw queue order numbers
             for idx, qb in enumerate(route_manager.queue):
-                cv.circle(out, (qb.x, qb.y), int(qb.radius) + 5, (0, 255, 255), 2)
-                cv.putText(out, f"#{idx+1}", (qb.x - 12, qb.y + 4), cv.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
+                if qb.color_name == "waypoint":
+                    cv.drawMarker(out, (qb.x, qb.y), (0, 255, 255), markerType=cv.MARKER_DIAMOND, markerSize=14, thickness=2)
+                    cv.putText(out, f"WP#{idx+1}", (qb.x - 18, qb.y - 12), cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+                else:
+                    cv.circle(out, (qb.x, qb.y), int(qb.radius) + 5, (0, 255, 255), 2)
+                    cv.putText(out, f"#{idx+1}", (qb.x - 12, qb.y + 4), cv.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
 
     # Mark target ball
     if target_ball is not None:
         color = (0, 255, 0)
-        cv.circle(out, (target_ball.x, target_ball.y), int(target_ball.radius) + 2, color, 2)
-        cv.circle(out, (target_ball.x, target_ball.y), 3, color, -1)
-        cv.putText(
-            out,
-            f"target_ball={target_ball.color_name} conf={target_ball.confidence:.2f}",
-            (10, 28),
-            cv.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            color,
-            2,
-        )
+        if target_ball.color_name == "waypoint":
+            cv.drawMarker(out, (target_ball.x, target_ball.y), color, markerType=cv.MARKER_DIAMOND, markerSize=20, thickness=2)
+            cv.putText(
+                out,
+                f"target=WAYPOINT",
+                (10, 28),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                color,
+                2,
+            )
+        else:
+            cv.circle(out, (target_ball.x, target_ball.y), int(target_ball.radius) + 2, color, 2)
+            cv.circle(out, (target_ball.x, target_ball.y), 3, color, -1)
+            cv.putText(
+                out,
+                f"target_ball={target_ball.color_name} conf={target_ball.confidence:.2f}",
+                (10, 28),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                color,
+                2,
+            )
 
     # Mark field corners (this is the green overlay)
     if field_corners is not None:
