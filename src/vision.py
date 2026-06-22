@@ -386,7 +386,14 @@ def detect_balls(
                     except Exception:
                         cls = -1
 
-                class_name = str(names.get(cls, "unknown")) if names is not None else "unknown"
+                raw_name = str(names.get(cls, "unknown")) if names is not None else "unknown"
+                raw_name_lower = raw_name.lower()
+                if "orange" in raw_name_lower:
+                    class_name = "orange"
+                elif "white" in raw_name_lower:
+                    class_name = "white"
+                else:
+                    continue
 
                 # Filter by configured confidence threshold
                 if conf < settings.min_ball_confidence:
@@ -618,6 +625,16 @@ def detect_danger_zones(
         flags.right = bool(np.any(xs >= zone_w * 2))
 
     return flags, state, filtered_mask, kept_contours
+
+def is_ball_in_danger_zone(ball: BallDetection, danger_contours: list[np.ndarray], scale_x: float) -> bool:
+    for contour in danger_contours:
+        dist_px = cv.pointPolygonTest(contour, (float(ball.x), float(ball.y)), measureDist=True)
+        if dist_px >= 0:
+            return True
+        dist_cm = abs(dist_px) / scale_x
+        if dist_cm <= 3.0:
+            return True
+    return False
 
 def find_danger_perspective_points(frame: np.ndarray) -> np.ndarray | None:
     mask = build_danger_mask(frame)

@@ -5,7 +5,7 @@ import numpy as np
 import cv2 as cv
 
 from models import *
-from src.vision import find_danger_perspective_points
+from src.vision import find_danger_perspective_points, is_ball_in_danger_zone
 from typing import Optional
 
 ROBOT_LENGTH_PX = 170
@@ -43,6 +43,7 @@ def annotate(
         danger_contours: Optional[list] = None,
         field_corners: Optional[FieldCorners] = None,
         small_goal: Optional[GoalDetection] = None,
+        route_manager: Optional[object] = None,
 ) -> np.ndarray:
     out = frame.copy()
 
@@ -61,23 +62,60 @@ def annotate(
                 2,
             )
 
+    scale_x, scale_y = get_scales(out.shape[1], out.shape[0])
+
     # Mark the detected balls
     for b in balls:
-        ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
+        is_danger = False
+        if danger_contours is not None:
+            is_danger = is_ball_in_danger_zone(b, danger_contours, scale_x)
+            
+        if is_danger:
+            ball_outline_color = (0, 0, 255)  # Red for danger
+        else:
+            ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
+            
         cv.circle(out, (b.x, b.y), int(b.radius), ball_outline_color, 1)
+        
+        status_suffix = " (danger)" if is_danger else ""
         label = (
-            f"{b.color_name} "
+            f"{b.color_name}{status_suffix} "
             f"conf={b.confidence:.2f} "
-            f"circ={b.circularity:.2f} "
             f"r={b.radius:.1f}"
         )
         text_pos = (b.x - 36, max(14, b.y - int(b.radius) - 8))
         cv.putText(out, label, text_pos, cv.FONT_HERSHEY_SIMPLEX, 0.45, ball_outline_color, 2)
 
+    # Draw Route Manager overlays (Queue path, numbers, visited marks)
+    if route_manager is not None:
+        # 1. Draw visited positions
+        for vx, vy in route_manager.visited_positions:
+            px_x = int(round(PERSPECTIVE_PADDING_PX + vx * scale_x))
+            px_y = int(round(PERSPECTIVE_PADDING_PX + vy * scale_y))
+            cv.drawMarker(out, (px_x, px_y), (0, 0, 255), markerType=cv.MARKER_TILTED_CROSS, markerSize=12, thickness=2)
+            cv.putText(out, "tried", (px_x + 8, px_y + 4), cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+
+        # 2. Draw queue trajectory lines
+        if route_manager.queue:
+            pts = []
+            if robot_pose is not None:
+                (rx, ry, *_) = corrected_robot_pose_values(robot_pose, frame_width=out.shape[1], frame_height=out.shape[0])
+                pts.append((int(round(rx)), int(round(ry))))
+            for qb in route_manager.queue:
+                pts.append((qb.x, qb.y))
+            
+            for i in range(len(pts) - 1):
+                cv.line(out, pts[i], pts[i+1], (255, 255, 0), 2, cv.LINE_AA)
+
+            # 3. Draw queue order numbers
+            for idx, qb in enumerate(route_manager.queue):
+                cv.circle(out, (qb.x, qb.y), int(qb.radius) + 5, (0, 255, 255), 2)
+                cv.putText(out, f"#{idx+1}", (qb.x - 12, qb.y + 4), cv.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
+
     # Mark target ball
     if target_ball is not None:
         color = (0, 255, 0)
-        cv.circle(out, (target_ball.x, target_ball.y), int(target_ball.radius), color, 2)
+        cv.circle(out, (target_ball.x, target_ball.y), int(target_ball.radius) + 2, color, 2)
         cv.circle(out, (target_ball.x, target_ball.y), 3, color, -1)
         cv.putText(
             out,
@@ -168,6 +206,8 @@ def annotate(
 
     # Mark robot and navigation debug info
     debug_lines: list[str] = []
+    if route_manager is not None:
+        debug_lines.append(f"route_state={route_manager.state.upper()} queue_len={len(route_manager.queue)} visited={len(route_manager.visited_positions)}")
     if robot_pose is not None:
         #draw_robot_footprint(out, robot_pose, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
         #cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)

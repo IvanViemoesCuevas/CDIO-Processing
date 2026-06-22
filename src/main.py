@@ -7,7 +7,8 @@ import platform
 from config import *
 from robot_client import RobotClient
 from models import NavigationContext, NavigationState, GoalDetection
-from navigation import decide_command, get_scales
+from navigation import decide_command, get_scales, decide_immediate_command
+from route_manager import RouteManager
 from ui import annotate
 from vision import (
     BallDetectionTuner,
@@ -89,6 +90,9 @@ def main() -> int:
     # Setup handoff manager
     handoff_manager = BallHandoffManager(required_empty_frames=11)
 
+    # Setup route manager
+    route_manager = RouteManager()
+
     try:
         while True:
             #image_path = "Test_Image.png"  # Change this to your image path
@@ -152,59 +156,94 @@ def main() -> int:
                 white_range=tuning.white_range,
                 white_sat_split=tuning.white_sat_split,
             )
-            danger, danger_state, _, danger_contours = detect_danger_zones(frame, settings, robot_pose)
+            danger, danger_state, danger_mask, danger_contours = detect_danger_zones(frame, settings, robot_pose)
 
             # Update handoff manager and check for handoff condition
             handoff_manager.update(balls)
 
-            # Choose target
+            # Decide target and command override from RouteManager
+            scale_x, scale_y = get_scales(frame.shape[1], frame.shape[0])
             now = time.monotonic()
-            commit_active = now < nav_state.hold_command_until
-            sample_ball = choose_target_ball(balls, robot_pose)
-            matched_candidate = (
-                match_candidate_target(nav_state.candidate_target, balls)
-                if nav_state.candidate_target is not None
-                else None
-            )
-
-            if nav_state.candidate_target is not None:
-                if matched_candidate is not None:
-                    target_ball = matched_candidate
-                elif commit_active:
-                    target_ball = nav_state.candidate_target
-                else:
-                    nav_state.candidate_target = None
-                    target_ball = sample_ball
-            else:
-                target_ball = sample_ball
-                if sample_ball is not None:
-                    nav_state.candidate_target = sample_ball
-
-            if sample_ball is not None:
-                nav_state.last_target_seen_time = now
-            elif not commit_active:
-                nav_state.candidate_target = None
-
-            # Decide command
-            decision, nav_state = decide_command(
-                context=NavigationContext(
-                    frame_width=frame.shape[1],
-                    frame_height=frame.shape[0],
-                    target_ball=target_ball,
-                    danger=danger,
-                    robot_pose=robot_pose,
-                    danger_state=danger_state,
-                    now=now,
-                    balls_count=len(balls),
-                    candidate_target_visible=matched_candidate is not None,
-                    handoff_manager=handoff_manager,
-                    small_goal=cached_small_goal,
-                ),
-                state=nav_state,
+            
+            target_ball, command_override, reason_override = route_manager.update(
+                current_time=now,
+                balls=balls,
+                robot_pose=robot_pose,
+                danger_mask=danger_mask,
+                scale_x=scale_x,
+                scale_y=scale_y,
                 settings=settings,
+                current_danger_contours=danger_contours
             )
-            command = decision.command
-            reason = decision.reason
+
+            # Manage handoff transitions in main loop
+            if route_manager.state == "handoff":
+                if nav_state.handoff_phase == "idle":
+                    nav_state.handoff_phase = "approaching_alignment"
+                    print("[main] RouteManager requested handoff. Initiating handoff...")
+                elif nav_state.handoff_phase == "done":
+                    print("[main] Handoff complete. Transitioning RouteManager to re-evaluation...")
+                    route_manager.state = "re_evaluating"
+                    nav_state.handoff_phase = "idle"
+
+            # Determine command and reason
+            if command_override:
+                # If it's a commit forward command, we still respect danger zones for safety!
+                if command_override == "i" and (
+                    (danger_state is not None and danger_state.too_close) or 
+                    (danger.front and danger.center) or 
+                    (danger.left and danger.right)
+                ):
+                    decision = decide_immediate_command(
+                        context=NavigationContext(
+                            frame_width=frame.shape[1],
+                            frame_height=frame.shape[0],
+                            target_ball=None,
+                            danger=danger,
+                            robot_pose=robot_pose,
+                            danger_state=danger_state,
+                            now=now,
+                            balls_count=len(balls),
+                            candidate_target_visible=False,
+                            handoff_manager=handoff_manager,
+                            small_goal=cached_small_goal,
+                        ),
+                        settings=settings,
+                        state=nav_state
+                    )
+                    command = decision.command
+                    reason = decision.reason
+                else:
+                    command = command_override
+                    reason = reason_override
+            else:
+                matched_candidate = (
+                    match_candidate_target(target_ball, balls)
+                    if target_ball is not None
+                    else None
+                )
+                
+                decision, nav_state = decide_command(
+                    context=NavigationContext(
+                        frame_width=frame.shape[1],
+                        frame_height=frame.shape[0],
+                        target_ball=target_ball,
+                        danger=danger,
+                        robot_pose=robot_pose,
+                        danger_state=danger_state,
+                        now=now,
+                        balls_count=len(balls),
+                        candidate_target_visible=matched_candidate is not None,
+                        handoff_manager=handoff_manager,
+                        small_goal=cached_small_goal,
+                    ),
+                    state=nav_state,
+                    settings=settings,
+                )
+                command = decision.command
+                reason = decision.reason
+                if "arrived" in reason and route_manager.state == "executing":
+                    route_manager.state = "commit"
 
             if command == candidate_command:
                 candidate_count += 1
@@ -240,6 +279,7 @@ def main() -> int:
                 danger_contours=danger_contours,
                 field_corners=field_corners,
                 small_goal=cached_small_goal,
+                route_manager=route_manager,
             )
             cv.imshow("Golfbot", display)
 
