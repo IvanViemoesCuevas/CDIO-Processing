@@ -56,6 +56,12 @@ class RouteManager:
             if danger_mask is not None:
                 if self.cumulative_danger_mask is None:
                     self.cumulative_danger_mask = np.zeros_like(danger_mask)
+                elif self.cumulative_danger_mask.shape != danger_mask.shape:
+                    self.cumulative_danger_mask = cv.resize(
+                        self.cumulative_danger_mask,
+                        (danger_mask.shape[1], danger_mask.shape[0]),
+                        interpolation=cv.INTER_NEAREST
+                    )
                 self.cumulative_danger_mask = cv.bitwise_or(self.cumulative_danger_mask, danger_mask)
             
             # Accumulate balls detected in this frame
@@ -308,6 +314,12 @@ class RouteManager:
             if danger_mask is not None:
                 if self.re_eval_danger_mask is None:
                     self.re_eval_danger_mask = np.zeros_like(danger_mask)
+                elif self.re_eval_danger_mask.shape != danger_mask.shape:
+                    self.re_eval_danger_mask = cv.resize(
+                        self.re_eval_danger_mask,
+                        (danger_mask.shape[1], danger_mask.shape[0]),
+                        interpolation=cv.INTER_NEAREST
+                    )
                 self.re_eval_danger_mask = cv.bitwise_or(self.re_eval_danger_mask, danger_mask)
 
             self.re_eval_balls.extend(balls)
