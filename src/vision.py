@@ -628,20 +628,17 @@ def detect_danger_zones(
 
 def is_ball_in_danger_zone(ball: BallDetection, danger_contours: list[np.ndarray], scale_x: float) -> bool:
     if not danger_contours:
-        # print(f"[DangerCheck] Ball at ({ball.x}, {ball.y}) color={ball.color_name} -> no danger contours detected!")
+        print(f"[DangerCheck] Ball at ({ball.x}, {ball.y}) color={ball.color_name} -> no danger contours detected!")
         return False
     
     min_dist_cm = float("inf")
     for contour in danger_contours:
         dist_px = cv.pointPolygonTest(contour, (float(ball.x), float(ball.y)), measureDist=True)
-        if dist_px >= 0:
-            min_dist_cm = 0.0
-            break
         dist_cm = abs(dist_px) / scale_x
         if dist_cm < min_dist_cm:
             min_dist_cm = dist_cm
             
-    in_danger = min_dist_cm <= 3.0
+    in_danger = min_dist_cm <= 5.0
     print(f"[DangerCheck] Ball at ({ball.x}, {ball.y}) color={ball.color_name} min_dist_cm={min_dist_cm:.2f} -> in_danger={in_danger}")
     return in_danger
 

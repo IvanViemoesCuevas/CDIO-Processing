@@ -5,7 +5,7 @@ import numpy as np
 import cv2 as cv
 
 from models import *
-from src.vision import find_danger_perspective_points, is_ball_in_danger_zone
+from vision import find_danger_perspective_points, is_ball_in_danger_zone
 from typing import Optional
 
 ROBOT_LENGTH_PX = 170

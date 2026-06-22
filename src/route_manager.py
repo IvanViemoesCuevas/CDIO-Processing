@@ -86,14 +86,9 @@ class RouteManager:
 
             # Group/cluster the accumulated balls to get unique positions
             unique_balls = []
-            contours_to_use = self.cumulative_contours if self.cumulative_contours else current_danger_contours
             for b in self.scan_balls:
                 cm_x = (b.x - PERSPECTIVE_PADDING_PX) / scale_x
                 cm_y = (b.y - PERSPECTIVE_PADDING_PX) / scale_y
-                
-                # Check danger zone
-                if is_ball_in_danger_zone(b, contours_to_use, scale_x):
-                    continue
                 
                 matched = False
                 for ub in unique_balls:
@@ -117,19 +112,29 @@ class RouteManager:
             
             # Filter and convert back to BallDetection in pixel coordinates
             planned_balls = []
+            contours_to_use = self.cumulative_contours if self.cumulative_contours else current_danger_contours
             for ub in unique_balls:
                 # Keep balls detected in at least 2 frames to filter transient noise
                 if ub['count'] >= 2:
                     pixel_x = int(round(PERSPECTIVE_PADDING_PX + ub['x_cm'] * scale_x))
                     pixel_y = int(round(PERSPECTIVE_PADDING_PX + ub['y_cm'] * scale_y))
-                    planned_balls.append(BallDetection(
+                    
+                    # Create temporary BallDetection object for danger zone check
+                    temp_ball = BallDetection(
                         x=pixel_x,
                         y=pixel_y,
                         radius=12.0,
                         color_name=ub['color'],
                         confidence=1.0,
                         circularity=1.0
-                    ))
+                    )
+                    
+                    # Check danger zone using the averaged position
+                    if is_ball_in_danger_zone(temp_ball, contours_to_use, scale_x):
+                        print(f"[RouteManager] Filtering out danger zone ball at ({temp_ball.x}, {temp_ball.y}) color={temp_ball.color_name}")
+                        continue
+                    
+                    planned_balls.append(temp_ball)
             
             # Separate white and orange balls
             white_balls = [b for b in planned_balls if b.color_name == "white"]
@@ -333,13 +338,9 @@ class RouteManager:
                 
                 # Evaluate if any balls are left outside danger zones
                 unique_balls = []
-                contours_to_use = re_eval_contours if re_eval_contours else current_danger_contours
                 for b in self.re_eval_balls:
                     cm_x = (b.x - PERSPECTIVE_PADDING_PX) / scale_x
                     cm_y = (b.y - PERSPECTIVE_PADDING_PX) / scale_y
-                    
-                    if is_ball_in_danger_zone(b, contours_to_use, scale_x):
-                        continue
                     
                     matched = False
                     for ub in unique_balls:
@@ -349,16 +350,41 @@ class RouteManager:
                             ub['x_cm'] = (ub['x_cm'] * n + cm_x) / (n + 1)
                             ub['y_cm'] = (ub['y_cm'] * n + cm_y) / (n + 1)
                             ub['count'] += 1
+                            if b.color_name == "orange":
+                                ub['color'] = "orange"
                             matched = True
                             break
                     if not matched:
                         unique_balls.append({
                             'x_cm': cm_x,
                             'y_cm': cm_y,
+                            'color': b.color_name,
                             'count': 1
                         })
                 
-                collectible_count = sum(1 for ub in unique_balls if ub['count'] >= 2)
+                # Check danger zone on the clustered unique balls
+                contours_to_use = re_eval_contours if re_eval_contours else current_danger_contours
+                collectible_count = 0
+                for ub in unique_balls:
+                    if ub['count'] >= 2:
+                        pixel_x = int(round(PERSPECTIVE_PADDING_PX + ub['x_cm'] * scale_x))
+                        pixel_y = int(round(PERSPECTIVE_PADDING_PX + ub['y_cm'] * scale_y))
+                        
+                        temp_ball = BallDetection(
+                            x=pixel_x,
+                            y=pixel_y,
+                            radius=12.0,
+                            color_name=ub.get('color', 'white'),
+                            confidence=1.0,
+                            circularity=1.0
+                        )
+                        
+                        if is_ball_in_danger_zone(temp_ball, contours_to_use, scale_x):
+                            print(f"[RouteManager] Re-eval filtering out danger zone ball at ({temp_ball.x}, {temp_ball.y})")
+                            continue
+                        
+                        collectible_count += 1
+                
                 print(f"[RouteManager] Re-evaluation finished. Found {collectible_count} collectible balls.")
                 
                 self.re_eval_start_time = None
