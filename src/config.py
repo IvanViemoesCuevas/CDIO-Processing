@@ -26,7 +26,7 @@ class Settings:
     # Aligning and arrival of the robot
     align_deadband_cm: float = 8.0
     target_radius_cm: float = 2.0
-    commit_forward_window_sec: float = 0.5  # TODO tweak
+    commit_forward_window_sec: float = 1.0  # TODO tweak
     pose_turn_deadband_deg: float = 5.0
     pose_arrival_distance_cm: float = 20.0
     waypoint_arrival_distance_cm: float = 8.0
@@ -41,7 +41,7 @@ class Settings:
     # Goal detection settings
     min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
     alignment_point_offset_cm: float = 45.0 # Move alignment point further left from the goal line
-    delivery_point_offset_cm: float = 15.0 # Move delivery point further left from the goal line
+    delivery_point_offset_cm: float = 28.0 # Move delivery point further left from the goal line
 
 
 # (Hue, Saturation, brightness)
