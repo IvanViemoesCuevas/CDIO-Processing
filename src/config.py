@@ -29,6 +29,7 @@ class Settings:
     commit_forward_window_sec: float = 1.0  # TODO tweak
     pose_turn_deadband_deg: float = 5.0
     pose_arrival_distance_cm: float = 20.0
+    waypoint_arrival_distance_cm: float = 8.0
 
     # Danger detection
     min_obstacle_area: int = 400
