@@ -241,7 +241,7 @@ def decide_command(
             
             goal_target = BallDetection(x=context.small_goal.x, y=context.small_goal.y, radius=0, color_name="goal", confidence=1.0)
             nav_context = replace(context, target_ball=goal_target)
-            res = decide_immediate_command(nav_context, settings, state, turn_deadband_deg=5) # Tighter alignment
+            res = decide_immediate_command(nav_context, settings, state, turn_deadband_deg=3) # Tighter alignment
 
             if res.command not in [CMD_LEFT, CMD_RIGHT]:
                 state.handoff_phase = "approaching_delivery"
@@ -266,9 +266,31 @@ def decide_command(
             res = decide_immediate_command(nav_context, settings, state, arrival_distance_cm=9.0) # Tighter arrival
 
             if "arrived" in res.reason:
+                state.handoff_phase = "final_aligning"
+                state.hold_command_until = context.now + 1.0 # Pause before final alignment
+                print("Handoff: Arrived at delivery point. Phase -> final_aligning")
+                return NavigationResult(CMD_STOP, "handoff:arrived_delivery"), state
+            return res, state
+
+        # --- Phase: final_aligning ---
+        if state.handoff_phase == "final_aligning":
+            if state.hold_command_until > context.now:
+                return NavigationResult(CMD_STOP, "handoff:pausing_final_align"), state
+
+            goal_target = BallDetection(
+                x=context.small_goal.x,
+                y=context.small_goal.y,
+                radius=0,
+                color_name="goal",
+                confidence=1.0
+            )
+            nav_context = replace(context, target_ball=goal_target)
+            res = decide_immediate_command(nav_context, settings, state, turn_deadband_deg=3)
+
+            if res.command not in [CMD_LEFT, CMD_RIGHT]:
                 state.handoff_phase = "starting_unload"
                 state.hold_command_until = context.now + 10.0 # Unload time
-                print("Handoff: Arrived at delivery point. Phase -> starting_unload")
+                print("Handoff: Final alignment complete. Phase -> starting_unload")
                 return NavigationResult(CMD_STOP, "handoff:ready_unload"), state
             return res, state
 
