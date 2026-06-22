@@ -7,7 +7,7 @@ import platform
 from config import *
 from robot_client import RobotClient
 from models import NavigationContext, NavigationState, GoalDetection
-from navigation import decide_command, get_scales, decide_immediate_command
+from navigation import decide_command, get_scales, decide_immediate_command, corrected_robot_pose_values
 from route_manager import RouteManager
 from ui import annotate
 from vision import (
@@ -175,6 +175,41 @@ def main() -> int:
                 settings=settings,
                 current_danger_contours=danger_contours
             )
+
+            # Check waypoint arrival BEFORE deciding command to prevent sending CMD_STOP
+            if route_manager.state == "executing" and robot_pose is not None:
+                import math
+                while target_ball is not None and target_ball.color_name == "waypoint":
+                    robot_x, robot_y, robot_heading, *_ = corrected_robot_pose_values(
+                        robot_pose,
+                        frame_width=frame.shape[1],
+                        frame_height=frame.shape[0],
+                    )
+                    dx = float(target_ball.x - robot_x)
+                    dy = float(target_ball.y - robot_y)
+                    dx_cm = dx / scale_x
+                    dy_cm = dy / scale_y
+                    distance_cm = math.hypot(dx_cm, dy_cm)
+                    
+                    waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
+                    if distance_cm <= waypoint_arrival_dist:
+                        print(f"[main] Arrived at waypoint at distance {distance_cm:.1f} cm (threshold {waypoint_arrival_dist} cm). Popping from queue.")
+                        if route_manager.queue:
+                            route_manager.queue.pop(0)
+                        
+                        # Re-update to get the next target ball
+                        target_ball, command_override, reason_override = route_manager.update(
+                            current_time=now,
+                            balls=balls,
+                            robot_pose=robot_pose,
+                            danger_mask=danger_mask,
+                            scale_x=scale_x,
+                            scale_y=scale_y,
+                            settings=settings,
+                            current_danger_contours=danger_contours
+                        )
+                    else:
+                        break
 
             # Manage handoff transitions in main loop
             if route_manager.state == "handoff":

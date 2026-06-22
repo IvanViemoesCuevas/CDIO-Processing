@@ -285,7 +285,10 @@ def decide_command(
             return NavigationResult(CMD_STOP, "handoff:done_stop"), state
 
     # Regular ball-following logic
-    immediate = decide_immediate_command(context, settings, state)
+    arrival_dist = None
+    if context.target_ball is not None and context.target_ball.color_name == "waypoint":
+        arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
+    immediate = decide_immediate_command(context, settings, state, arrival_distance_cm=arrival_dist)
     return apply_commit_transitions(immediate, context, state, settings)
 
 
