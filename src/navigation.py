@@ -266,11 +266,17 @@ def decide_command(
             res = decide_immediate_command(nav_context, settings, state, arrival_distance_cm=9.0) # Tighter arrival
 
             if "arrived" in res.reason:
-                state.handoff_phase = "delivering"
+                state.handoff_phase = "starting_unload"
                 state.hold_command_until = context.now + 10.0 # Unload time
-                print("Handoff: Arrived at delivery point. Phase -> delivering")
-                return NavigationResult(CMD_SWITCH, "handoff:start_unload"), state
+                print("Handoff: Arrived at delivery point. Phase -> starting_unload")
+                return NavigationResult(CMD_STOP, "handoff:ready_unload"), state
             return res, state
+
+        # --- Phase: starting_unload ---
+        if state.handoff_phase == "starting_unload":
+            state.handoff_phase = "delivering"
+            print("Handoff: Starting unload. Phase -> delivering")
+            return NavigationResult(CMD_SWITCH, "handoff:start_unload"), state
 
         # --- Phase: delivering ---
         if state.handoff_phase == "delivering":

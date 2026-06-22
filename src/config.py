@@ -8,7 +8,7 @@ PERSPECTIVE_PADDING_PX = 40
 
 @dataclass
 class Settings:
-    host: str = "172.20.10.2"
+    host: str = "172.20.10.9"
     port: int = 12345
     send_interval_sec: float = 0.12
     stable_frames_required: int = 2
@@ -40,7 +40,7 @@ class Settings:
     # Goal detection settings
     min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
     alignment_point_offset_cm: float = 45.0 # Move alignment point further left from the goal line
-    delivery_point_offset_cm: float = 25.0 # Move delivery point further left from the goal line
+    delivery_point_offset_cm: float = 30.0 # Move delivery point further left from the goal line
 
 
 # (Hue, Saturation, brightness)
