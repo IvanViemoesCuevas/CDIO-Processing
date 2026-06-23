@@ -7,7 +7,7 @@ import platform
 
 from config import *
 from robot_client import RobotClient
-from models import NavigationContext, NavigationState, GoalDetection, RobotPose
+from models import NavigationContext, NavigationState, GoalDetection, RobotPose, NavigationResult
 from navigation import decide_command, get_scales, decide_immediate_command, corrected_robot_pose_values
 from route_manager import RouteManager
 from ui import annotate
@@ -27,7 +27,7 @@ from vision import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="172.20.10.9", help="Robot IP/hostname")
+    parser.add_argument("--host", default="172.20.10.2", help="Robot IP/hostname")
     parser.add_argument("--port", type=int, default=12345, help="Robot TCP port")
     parser.add_argument("--dry-run", action="store_true", help="Do not open socket; only print decisions")
     parser.add_argument(
@@ -243,33 +243,52 @@ def main() -> int:
 
             # Determine command and reason
             if command_override:
-                # If it's a commit forward command, we still respect danger zones for safety!
-                if command_override == "i" and (
-                        (danger_state is not None and danger_state.too_close)
-                        or danger.front
-                        or danger.left
-                        or danger.right
-                        or (danger.center and not danger.back)
-                ):
-                    decision = decide_immediate_command(
-                        context=NavigationContext(
-                            frame_width=frame.shape[1],
-                            frame_height=frame.shape[0],
-                            target_ball=None,
-                            danger=danger,
-                            robot_pose=robot_pose,
-                            danger_state=danger_state,
-                            now=now,
-                            balls_count=len(balls),
-                            candidate_target_visible=False,
-                            handoff_manager=handoff_manager,
-                            small_goal=cached_small_goal,
-                        ),
-                        settings=settings,
-                        state=nav_state
-                    )
-                    command = decision.command
-                    reason = f"commit_safety:{decision.reason}"
+                immediate_decision = decide_immediate_command(
+                    context=NavigationContext(
+                        frame_width=frame.shape[1],
+                        frame_height=frame.shape[0],
+                        target_ball=target_ball,
+                        danger=danger,
+                        robot_pose=danger_robot_pose,
+                        danger_state=danger_state,
+                        now=now,
+                        balls_count=len(balls),
+                        candidate_target_visible=False,
+                        handoff_manager=handoff_manager,
+                        small_goal=cached_small_goal,
+                    ),
+                    settings=settings,
+                    state=nav_state,
+                )
+
+                commit_warning_active = (
+                    command_override == CMD_FORWARD
+                    and danger_state is not None
+                    and danger_state.nearest_point is not None
+                    and danger_state.nearest_dy_body >= 0.0
+                    and danger_state.nearest_distance_cm <= 5.0
+                )
+
+                if commit_warning_active and not immediate_decision.reason.startswith("danger"):
+                    if danger_state.nearest_dx_body < -2.0:
+                        immediate_decision = NavigationResult(
+                            CMD_RIGHT,
+                            f"danger:commit_warning_left d={danger_state.nearest_distance_cm:.1f}",
+                        )
+                    elif danger_state.nearest_dx_body > 2.0:
+                        immediate_decision = NavigationResult(
+                            CMD_LEFT,
+                            f"danger:commit_warning_right d={danger_state.nearest_distance_cm:.1f}",
+                        )
+                    else:
+                        immediate_decision = NavigationResult(
+                            CMD_BACKWARD,
+                            f"danger:commit_warning_front d={danger_state.nearest_distance_cm:.1f}",
+                        )
+
+                if immediate_decision.reason.startswith("danger"):
+                    command = immediate_decision.command
+                    reason = f"override_safety:{immediate_decision.reason}"
                 else:
                     command = command_override
                     reason = reason_override
@@ -313,17 +332,20 @@ def main() -> int:
 
             # --- Command Sending (unchanged) ---
             now_time = time.time()
-            is_one_shot_switch = command == CMD_SWITCH and reason == "handoff:start_unload"
+            is_one_shot_switch = command == CMD_SWITCH and (reason == "handoff:start_unload" or reason == "handoff:done_stop")
+            is_safety_override = reason.startswith("override_safety:danger")
+
             should_send = (
-                is_one_shot_switch
-                or (
-                    candidate_count >= settings.stable_frames_required
-                    and now_time - last_send_time >= settings.send_interval_sec
-                )
+                    is_one_shot_switch
+                    or is_safety_override
+                    or (
+                            candidate_count >= settings.stable_frames_required
+                            and now_time - last_send_time >= settings.send_interval_sec
+                    )
             )
 
             if should_send and candidate_command is not None:
-                command_to_send = command if is_one_shot_switch else candidate_command
+                command_to_send = command if (is_one_shot_switch or is_safety_override) else candidate_command
                 if client is not None:
                     client.send_char(command_to_send)
                 print(f"sent={command_to_send} reason={reason}")

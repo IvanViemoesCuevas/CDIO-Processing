@@ -8,7 +8,7 @@ PERSPECTIVE_PADDING_PX = 40
 
 @dataclass
 class Settings:
-    host: str = "172.20.10.9"
+    host: str = "172.20.10.2"
     port: int = 12345
     send_interval_sec: float = 0.12
     stable_frames_required: int = 2
@@ -26,7 +26,7 @@ class Settings:
     # Aligning and arrival of the robot
     align_deadband_cm: float = 8.0
     target_radius_cm: float = 2.0
-    commit_forward_window_sec: float = 2.0  # TODO tweak
+    commit_forward_window_sec: float = 1.0  # TODO tweak
     pose_turn_deadband_deg: float = 5.0
     pose_arrival_distance_cm: float = 20.0
     waypoint_arrival_distance_cm: float = 8.0
@@ -43,9 +43,9 @@ class Settings:
 
     # Robot footprint used for danger detection.
     robot_length_cm: float = 45.0
-    robot_width_cm: float = 15.0
+    robot_width_cm: float = 18.0
     robot_danger_margin_cm: float = 0.0
-    robot_front_extra_margin_cm: float = 0.0
+    robot_front_extra_margin_cm: float = 0.5
     robot_side_extra_margin_cm: float = 0.0
 
     # Goal detection settings
