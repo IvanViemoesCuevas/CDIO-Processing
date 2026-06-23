@@ -181,7 +181,7 @@ def main() -> int:
             target_ball, command_override, reason_override = route_manager.update(
                 current_time=now,
                 balls=balls,
-                robot_pose=robot_pose,
+                robot_pose=danger_robot_pose,
                 danger_mask=danger_mask,
                 scale_x=scale_x,
                 scale_y=scale_y,
@@ -192,7 +192,13 @@ def main() -> int:
 
             # Check waypoint arrival BEFORE deciding command to prevent sending CMD_STOP
             if route_manager.state == "executing" and robot_pose is not None:
+                waypoint_pops_this_frame = 0
                 while target_ball is not None and target_ball.color_name == "waypoint":
+                    waypoint_pops_this_frame += 1
+                    if waypoint_pops_this_frame > 3:
+                        #print("[main] Waypoint pop guard hit; leaving loop until next frame.")
+                        break
+
                     robot_x, robot_y, robot_heading, *_ = corrected_robot_pose_values(
                         robot_pose,
                         frame_width=frame.shape[1],
@@ -214,7 +220,7 @@ def main() -> int:
                         target_ball, command_override, reason_override = route_manager.update(
                             current_time=now,
                             balls=balls,
-                            robot_pose=robot_pose,
+                            robot_pose=danger_robot_pose,
                             danger_mask=danger_mask,
                             scale_x=scale_x,
                             scale_y=scale_y,
@@ -239,9 +245,11 @@ def main() -> int:
             if command_override:
                 # If it's a commit forward command, we still respect danger zones for safety!
                 if command_override == "i" and (
-                    (danger_state is not None and danger_state.too_close) or
-                    (danger.front and danger.center) or
-                    (danger.left and danger.right)
+                        (danger_state is not None and danger_state.too_close)
+                        or danger.front
+                        or danger.left
+                        or danger.right
+                        or (danger.center and not danger.back)
                 ):
                     decision = decide_immediate_command(
                         context=NavigationContext(
@@ -261,7 +269,7 @@ def main() -> int:
                         state=nav_state
                     )
                     command = decision.command
-                    reason = decision.reason
+                    reason = f"commit_safety:{decision.reason}"
                 else:
                     command = command_override
                     reason = reason_override
@@ -321,6 +329,36 @@ def main() -> int:
                 print(f"sent={command_to_send} reason={reason}")
                 last_send_command = command_to_send
                 last_send_time = now_time
+
+            target_desc = "none"
+            if target_ball is not None:
+                target_desc = f"{target_ball.color_name}@({target_ball.x},{target_ball.y})"
+
+            danger_desc = (
+                f"F{int(danger.front)} B{int(danger.back)} "
+                f"L{int(danger.left)} C{int(danger.center)} R{int(danger.right)}"
+            )
+            debug_signature = (
+                route_manager.state,
+                len(route_manager.queue),
+                target_desc,
+                command,
+                reason,
+                danger_desc,
+            )
+            if debug_signature != last_debug_signature:
+                robot_desc = "none"
+                if robot_pose is not None:
+                    robot_desc = f"({robot_pose.x},{robot_pose.y},{math.degrees(robot_pose.heading_rad):.1f}deg)"
+                """
+                print(
+                    "[main] "
+                    f"route={route_manager.state} queue={len(route_manager.queue)} "
+                    f"target={target_desc} robot={robot_desc} "
+                    f"danger={danger_desc} cmd={command} reason={reason}"
+                )
+                """
+                last_debug_signature = debug_signature
 
             # Annotate frame with detections and command
             display = annotate(

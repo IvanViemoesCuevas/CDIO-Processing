@@ -112,6 +112,14 @@ def get_scales(frame_width: int, frame_height: int) -> tuple[float, float]:
     return scale_x, scale_y
 
 
+def opposite_turn(command: str) -> str:
+    if command == CMD_LEFT:
+        return CMD_RIGHT
+    if command == CMD_RIGHT:
+        return CMD_LEFT
+    return ""
+
+
 def decide_immediate_command(
     context: NavigationContext,
     settings: Settings,
@@ -157,6 +165,30 @@ def decide_immediate_command(
 
         return NavigationResult(CMD_LEFT, f"{reason_prefix}:default_left")
 
+    def target_turn_command() -> str | None:
+        if target_ball is None:
+            return None
+
+        if context.robot_pose is not None:
+            if target_heading_error_deg is None:
+                return None
+            if target_heading_error_deg < -turn_deadband:
+                return CMD_LEFT
+            if target_heading_error_deg > turn_deadband:
+                return CMD_RIGHT
+            return None
+
+        scale_x, _ = get_scales(context.frame_width, context.frame_height)
+        align_deadband_px = settings.align_deadband_cm * scale_x
+        center_x = context.frame_width // 2
+        error_x = target_ball.x - center_x
+
+        if error_x < -align_deadband_px:
+            return CMD_LEFT
+        if error_x > align_deadband_px:
+            return CMD_RIGHT
+        return None
+
     if danger_state is not None and danger_state.too_close:
         if danger_state.nearest_dy_body < -float(settings.danger_rear_ignore_cm):
             return NavigationResult(CMD_FORWARD, f"danger:avoid_back d={danger_state.nearest_distance_cm:.1f}")
@@ -185,6 +217,16 @@ def decide_immediate_command(
         return NavigationResult(CMD_LEFT, "danger:right")
     if danger.left and danger.right:
         return NavigationResult(CMD_BACKWARD, "danger:both_sides")
+
+    target_turn = target_turn_command()
+    escape_undo_command = state.escape_undo_command or opposite_turn(state.escape_turn_command)
+    if (
+        state.escape_turn_command in (CMD_LEFT, CMD_RIGHT)
+        and (state.escape_turn_until <= 0.0 or context.now <= state.escape_turn_until)
+        and target_turn == escape_undo_command
+    ):
+        turn_name = "left" if state.escape_turn_command == CMD_LEFT else "right"
+        return NavigationResult(state.escape_turn_command, f"escape:{turn_name}")
 
     if target_ball is None:
         return NavigationResult(CMD_STOP, "no_ball")
@@ -370,8 +412,40 @@ def apply_commit_transitions(
         hold_command_until=state.hold_command_until,
         last_target_seen_time=state.last_target_seen_time,
         handoff_phase=state.handoff_phase,
-        last_command = result.command
+        last_command=result.command,
+        avoidance_turn_command=state.avoidance_turn_command,
+        avoidance_turn_count=state.avoidance_turn_count,
+        escape_turn_command=state.escape_turn_command,
+        escape_undo_command=state.escape_undo_command,
+        escape_turn_until=state.escape_turn_until,
     )
+
+    if result.command == CMD_FORWARD:
+        next_state.avoidance_turn_command = ""
+        next_state.avoidance_turn_count = 0
+        next_state.escape_turn_command = ""
+        next_state.escape_undo_command = ""
+        next_state.escape_turn_until = 0.0
+    elif result.reason.startswith("danger") and result.command in (CMD_LEFT, CMD_RIGHT):
+        if state.avoidance_turn_command == result.command:
+            next_state.avoidance_turn_count = state.avoidance_turn_count + 1
+        else:
+            next_state.avoidance_turn_command = result.command
+            next_state.avoidance_turn_count = 1
+
+        if next_state.avoidance_turn_count >= settings.avoidance_escape_repeats:
+            next_state.escape_turn_command = result.command
+            next_state.escape_undo_command = opposite_turn(result.command)
+            next_state.escape_turn_until = 0.0
+            next_state.avoidance_turn_count = 0
+    elif result.reason.startswith("escape"):
+        next_state.avoidance_turn_command = result.command
+        if next_state.escape_turn_until <= 0.0:
+            next_state.escape_turn_until = context.now + settings.avoidance_escape_max_sec
+    else:
+        next_state.escape_turn_command = ""
+        next_state.escape_undo_command = ""
+        next_state.escape_turn_until = 0.0
 
     if result.reason.startswith("danger"):
         return result, next_state

@@ -266,6 +266,11 @@ class RouteManager:
             frame_height = danger_mask.shape[0] if danger_mask is not None else 960
             obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
             print(f"[RouteManager] Detected {len(obstacles)} middle obstacles.")
+            for obs_idx, obs in enumerate(obstacles):
+                print(
+                    f"[RouteManager] obstacle[{obs_idx}] "
+                    f"x=({obs[0]:.1f},{obs[2]:.1f}) y=({obs[1]:.1f},{obs[3]:.1f}) cm"
+                )
             
             final_queue = []
             curr_x, curr_y = start_x, start_y
@@ -276,6 +281,11 @@ class RouteManager:
                 
                 obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
                 if obs is not None:
+                    print(
+                        "[RouteManager] Planned segment crosses obstacle: "
+                        f"from=({curr_x:.1f},{curr_y:.1f}) to=({target_x_cm:.1f},{target_y_cm:.1f}) "
+                        f"obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
+                    )
                     wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
                     if wp is not None:
                         wp_x, wp_y = wp
@@ -290,7 +300,10 @@ class RouteManager:
                             circularity=1.0
                         )
                         final_queue.append(wp_ball)
-                        print(f"[RouteManager] Inserted waypoint at ({wp_px_x}, {wp_px_y}) to avoid obstacle.")
+                        print(
+                            f"[RouteManager] Inserted waypoint at ({wp_px_x}, {wp_px_y}) "
+                            f"cm=({wp_x:.1f},{wp_y:.1f}) to avoid obstacle."
+                        )
                 
                 final_queue.append(target)
                 curr_x, curr_y = target_x_cm, target_y_cm
@@ -326,6 +339,11 @@ class RouteManager:
 
                     obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
                     if obs is not None:
+                        print(
+                            "[RouteManager] Handoff segment crosses obstacle: "
+                            f"from=({r_x_cm:.1f},{r_y_cm:.1f}) to=({align_x_cm:.1f},{align_y_cm:.1f}) "
+                            f"obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
+                        )
                         wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
                         if wp is not None:
                             wp_x, wp_y = wp
@@ -338,7 +356,10 @@ class RouteManager:
                                     color_name="waypoint", confidence=1.0, circularity=1.0,
                                 )
                                 self.queue.append(wp_ball)
-                                print(f"[RouteManager] Inserted handoff bypass waypoint at ({wp_px_x}, {wp_px_y})")
+                                print(
+                                    f"[RouteManager] Inserted handoff bypass waypoint at ({wp_px_x}, {wp_px_y}) "
+                                    f"cm=({wp_x:.1f},{wp_y:.1f})"
+                                )
                                 # Stay in executing so the robot drives through the waypoint first
                                 return wp_ball, "", ""
                             else:
@@ -398,6 +419,13 @@ class RouteManager:
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
                     obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
                     if obs is not None:
+                        """
+                        print(
+                            "[RouteManager] Dynamic segment crosses obstacle: "
+                            f"from=({r_x_cm:.1f},{r_y_cm:.1f}) to=({t_x_cm:.1f},{t_y_cm:.1f}) "
+                            f"target={target.color_name} obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
+                        )
+                        """
                         wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
                         if wp is not None:
                             wp_x, wp_y = wp
@@ -416,12 +444,15 @@ class RouteManager:
                                     circularity=1.0
                                 )
                                 self.queue.insert(0, wp_ball)
-                                print(f"[RouteManager] Dynamic insertion of bypass waypoint at ({wp_px_x}, {wp_px_y})")
+                                print(
+                                    f"[RouteManager] Dynamic insertion of bypass waypoint at ({wp_px_x}, {wp_px_y}) "
+                                    f"cm=({wp_x:.1f},{wp_y:.1f})"
+                                )
                                 target = wp_ball
                                 t_x_cm, t_y_cm = wp_x, wp_y
                                 dist_to_target = math.hypot(t_x_cm - r_x_cm, t_y_cm - r_y_cm)
-                            else:
-                                print(f"[RouteManager] Skip dynamic insertion: generated waypoint at ({wp_x:.1f}, {wp_y:.1f}) is too close to robot ({r_x_cm:.1f}, {r_y_cm:.1f}).")
+                            #else:
+                                #print(f"[RouteManager] Skip dynamic insertion: generated waypoint at ({wp_x:.1f}, {wp_y:.1f}) is too close to robot ({r_x_cm:.1f}, {r_y_cm:.1f}).")
                 
                 if target.color_name != "waypoint" and dist_to_target < 30.0:
                     # Is target currently matched by any detection?

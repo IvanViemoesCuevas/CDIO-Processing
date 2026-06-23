@@ -5,12 +5,13 @@ import numpy as np
 import cv2 as cv
 
 from models import *
-from config import PERSPECTIVE_PADDING_PX
+from src.config import Settings
+from config import PERSPECTIVE_PADDING_PX,  Settings
 from vision import find_danger_perspective_points, is_ball_in_danger_zone
 from typing import Optional
 
-ROBOT_LENGTH_PX = 170
-ROBOT_WIDTH_PX = 80
+ROBOT_LENGTH_CM = Settings.robot_length_cm
+ROBOT_WIDTH_CM = Settings.robot_width_cm
 
 from navigation import (
     corrected_robot_pose_values,
@@ -23,12 +24,36 @@ from navigation import (
     get_scales,
 )
 
-def draw_robot_footprint(frame: np.ndarray, x: float, y: float, heading_rad: float, length_px: float, width_px: float) -> None:
-    length = max(10.0, float(length_px))
-    width = max(10.0, float(width_px))
-    angle_deg = math.degrees(heading_rad)
-    rect = ((float(x), float(y)), (length, width), angle_deg)
-    box = cv.boxPoints(rect).astype(np.int32)
+def draw_robot_footprint(frame: np.ndarray, x: float, y: float, heading_rad: float, length_cm: float, width_cm: float) -> None:
+    length_cm = max(1.0, float(length_cm))
+    width_cm = max(1.0, float(width_cm))
+    half_length_cm = length_cm / 2.0
+    half_width_cm = width_cm / 2.0
+
+    scale_x, scale_y = get_scales(frame.shape[1], frame.shape[0])
+
+    heading_x = math.cos(heading_rad)
+    heading_y = math.sin(heading_rad)
+    right_x = -heading_y
+    right_y = heading_x
+
+    corners_cm = [
+        (half_length_cm, -half_width_cm),
+        (half_length_cm, half_width_cm),
+        (-half_length_cm, half_width_cm),
+        (-half_length_cm, -half_width_cm),
+    ]
+
+    corners_px = []
+    for forward_cm, right_cm in corners_cm:
+        dx_cm = forward_cm * heading_x + right_cm * right_x
+        dy_cm = forward_cm * heading_y + right_cm * right_y
+        corners_px.append((
+            int(round(x + dx_cm * scale_x)),
+            int(round(y + dy_cm * scale_y)),
+        ))
+
+    box = np.asarray(corners_px, dtype=np.int32)
     cv.polylines(frame, [box], True, (0, 255, 255), 2)
 
 def annotate(
@@ -70,14 +95,14 @@ def annotate(
         is_danger = False
         if danger_contours is not None:
             is_danger = is_ball_in_danger_zone(b, danger_contours, scale_x)
-            
+
         if is_danger:
             ball_outline_color = (0, 0, 255)  # Red for danger
         else:
             ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
-            
+
         cv.circle(out, (b.x, b.y), int(b.radius), ball_outline_color, 1)
-        
+
         status_suffix = " (danger)" if is_danger else ""
         label = (
             f"{b.color_name}{status_suffix} "
@@ -104,7 +129,7 @@ def annotate(
                 pts.append((int(round(rx)), int(round(ry))))
             for qb in route_manager.queue:
                 pts.append((qb.x, qb.y))
-            
+
             for i in range(len(pts) - 1):
                 cv.line(out, pts[i], pts[i+1], (255, 255, 0), 2, cv.LINE_AA)
 
@@ -227,7 +252,7 @@ def annotate(
     if route_manager is not None:
         debug_lines.append(f"route_state={route_manager.state.upper()} queue_len={len(route_manager.queue)} visited={len(route_manager.visited_positions)}")
     if robot_pose is not None:
-        #draw_robot_footprint(out, robot_pose, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
+        #draw_robot_footprint(out, robot_pose.x, robot_pose.y, robot_pose.heading_rad, ROBOT_LENGTH_CM, ROBOT_WIDTH_CM)
         #cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
         #marker_point = (robot_pose.x, robot_pose.y)
 
@@ -258,7 +283,7 @@ def annotate(
         robot_point = (int(round(robot_x)), int(round(robot_y)))
 
         # Draw robot footprint at corrected location and heading
-        draw_robot_footprint(out, robot_x, robot_y, robot_heading, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
+        draw_robot_footprint(out, robot_x, robot_y, robot_heading, ROBOT_LENGTH_CM, ROBOT_WIDTH_CM)
 
         # Draw marker point and correction line
         cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
