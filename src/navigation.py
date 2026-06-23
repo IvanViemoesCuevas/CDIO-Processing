@@ -145,7 +145,8 @@ def decide_immediate_command(
     if danger.right and not danger.left:
         return NavigationResult(CMD_LEFT, "danger:right")
     if danger.left and danger.right:
-        return NavigationResult(CMD_STOP, "danger:both")
+        if danger.front:
+            return NavigationResult(CMD_STOP, "danger:both")
 
     if target_ball is None:
         return NavigationResult(CMD_STOP, "no_ball")

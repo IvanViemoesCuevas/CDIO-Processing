@@ -612,8 +612,9 @@ def detect_danger_zones(
             flags.front = bool(np.any(forward_body_cm[near] > half_l))
             flags.back = bool(np.any(forward_body_cm[near] < -half_l))
             flags.center = bool(np.any(np.abs(right_body_cm[near]) <= float(settings.danger_center_deadband_cm)))
-            flags.left = bool(np.any(right_body_cm[near] < -half_w))
-            flags.right = bool(np.any(right_body_cm[near] > half_w))
+            side_threshold = float(settings.danger_too_close_cm)
+            flags.left = bool(np.any((right_body_cm[near] < -half_w) & (right_body_cm[near] >= -half_w - side_threshold)))
+            flags.right = bool(np.any((right_body_cm[near] > half_w) & (right_body_cm[near] <= half_w + side_threshold)))
 
         state.nearest_dx_body = float(right_body_cm[nearest_index])
         state.nearest_dy_body = float(forward_body_cm[nearest_index])
