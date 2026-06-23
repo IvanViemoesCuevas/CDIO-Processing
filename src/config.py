@@ -26,7 +26,7 @@ class Settings:
     # Aligning and arrival of the robot
     align_deadband_cm: float = 8.0
     target_radius_cm: float = 2.0
-    commit_forward_window_sec: float = 1.0  # TODO tweak
+    commit_forward_window_sec: float = 2.0  # TODO tweak
     pose_turn_deadband_deg: float = 5.0
     pose_arrival_distance_cm: float = 20.0
     waypoint_arrival_distance_cm: float = 8.0
