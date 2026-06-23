@@ -346,19 +346,6 @@ def main() -> int:
                 reason,
                 danger_desc,
             )
-            if debug_signature != last_debug_signature:
-                robot_desc = "none"
-                if robot_pose is not None:
-                    robot_desc = f"({robot_pose.x},{robot_pose.y},{math.degrees(robot_pose.heading_rad):.1f}deg)"
-                """
-                print(
-                    "[main] "
-                    f"route={route_manager.state} queue={len(route_manager.queue)} "
-                    f"target={target_desc} robot={robot_desc} "
-                    f"danger={danger_desc} cmd={command} reason={reason}"
-                )
-                """
-                last_debug_signature = debug_signature
 
             # Annotate frame with detections and command
             display = annotate(

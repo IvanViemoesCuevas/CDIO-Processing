@@ -35,7 +35,7 @@ class Settings:
     # Danger detection
     min_obstacle_area: int = 400
     danger_center_deadband_cm: float = 0.0
-    danger_distance_cm: float = 0.0
+    danger_distance_cm: float = 2.0
     danger_too_close_cm: float = 2.0
     danger_rear_ignore_cm: float = 0.0
     avoidance_escape_repeats: int = 2
@@ -51,7 +51,7 @@ class Settings:
     # Goal detection settings
     min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
     alignment_point_offset_cm: float = 45.0 # Move alignment point further left from the goal line
-    delivery_point_offset_cm: float = 28.0 # Move delivery point further left from the goal line
+    delivery_point_offset_cm: float = 25.0 # Move delivery point further left from the goal line
 
 
 # (Hue, Saturation, brightness)
