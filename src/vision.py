@@ -591,7 +591,7 @@ def detect_danger_zones(
         scale_x = width / FIELD_WIDTH_CM
         scale_y = height / FIELD_HEIGHT_CM
 
-        # Robot dimensions in cm
+        # Robot dimensions in cm (BOTH centered at robot center)
         WHEEL_AREA_WIDTH_CM = 20.0
         WHEEL_AREA_LENGTH_CM = 7.0
         BOX_AREA_WIDTH_CM = 12.0
@@ -620,17 +620,25 @@ def detect_danger_zones(
             dtype=np.float32,
         )
 
-        # Check which points are in the wheel zone
-        in_wheel_zone = np.array([
-            is_point_in_robot_zone(f, r, WHEEL_AREA_WIDTH_CM, WHEEL_AREA_LENGTH_CM)
-            for f, r in zip(forward_body_cm, right_body_cm)
-        ])
+        # Check which points are in the wheel zone (centered at robot center)
+        half_wheel_width = WHEEL_AREA_WIDTH_CM / 2.0
+        half_wheel_length = WHEEL_AREA_LENGTH_CM / 2.0
+        in_wheel_zone = (
+                (forward_body_cm >= -half_wheel_length) &
+                (forward_body_cm <= half_wheel_length) &
+                (right_body_cm >= -half_wheel_width) &
+                (right_body_cm <= half_wheel_width)
+        )
 
-        # Check which points are in the box zone
-        in_box_zone = np.array([
-            is_point_in_robot_zone(f, r, BOX_AREA_WIDTH_CM, BOX_AREA_LENGTH_CM)
-            for f, r in zip(forward_body_cm, right_body_cm)
-        ])
+        # Check which points are in the box zone (centered at robot center)
+        half_box_width = BOX_AREA_WIDTH_CM / 2.0
+        half_box_length = BOX_AREA_LENGTH_CM / 2.0
+        in_box_zone = (
+                (forward_body_cm >= -half_box_length) &
+                (forward_body_cm <= half_box_length) &
+                (right_body_cm >= -half_box_width) &
+                (right_body_cm <= half_box_width)
+        )
 
         # Combined danger zone
         danger_zone = in_wheel_zone | in_box_zone
@@ -648,19 +656,44 @@ def detect_danger_zones(
             state.nearest_dx_body = float(right_body_cm[nearest_index])
             state.nearest_dy_body = float(forward_body_cm[nearest_index])
 
-            # Set danger flags based on which zones are hit
+            # --- Check WHEEL ZONE (centered, small 20x7cm) ---
             if np.any(in_wheel_zone):
-                # Wheel zone is at the front - mark as front danger
-                flags.front = True
-                # Also check left/right/center within wheel zone
+                wheel_forward = forward_body_cm[in_wheel_zone]
                 wheel_right = right_body_cm[in_wheel_zone]
-                flags.center = bool(np.any(np.abs(wheel_right) <= 3.0))  # 3cm deadband
-                flags.left = bool(np.any(wheel_right < -3.0))
-                flags.right = bool(np.any(wheel_right > 3.0))
 
+                # Front/Back within wheel zone (relative to robot center)
+                if np.any(wheel_forward > 2.0):  # Slightly forward of center
+                    flags.front = True
+                if np.any(wheel_forward < -2.0):  # Slightly behind center
+                    flags.back = True
+
+                # Left/Right within wheel zone
+                if np.any(wheel_right < -3.0):  # 3cm deadband
+                    flags.left = True
+                if np.any(wheel_right > 3.0):
+                    flags.right = True
+                if np.any(np.abs(wheel_right) <= 3.0):
+                    flags.center = True
+
+            # --- Check BOX ZONE (centered, long 12x42cm) ---
             if np.any(in_box_zone):
-                # Box zone is at the back - mark as back danger
-                flags.back = True
+                box_forward = forward_body_cm[in_box_zone]
+                box_right = right_body_cm[in_box_zone]
+
+                # Front/Back within box zone (relative to robot center)
+                # The box zone is 42cm long, so split it at the robot center (forward=0)
+                if np.any(box_forward > 3.0):  # Forward of robot center
+                    flags.front = True
+                if np.any(box_forward < -3.0):  # Behind robot center
+                    flags.back = True
+
+                # Left/Right within box zone
+                if np.any(box_right < -3.0):  # 3cm deadband
+                    flags.left = True
+                if np.any(box_right > 3.0):
+                    flags.right = True
+                if np.any(np.abs(box_right) <= 3.0):
+                    flags.center = True
 
             # Check if too close
             state.too_close = (
