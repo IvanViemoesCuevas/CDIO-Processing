@@ -3,8 +3,8 @@ import time
 import cv2 as cv
 import numpy as np
 from typing import Optional, List, Tuple
-from config import PERSPECTIVE_PADDING_PX, FIELD_WIDTH_CM, FIELD_HEIGHT_CM
-from models import BallDetection, RobotPose, GoalDetection
+from config import PERSPECTIVE_PADDING_PX
+from models import BallDetection, RobotPose
 from vision import is_ball_in_danger_zone
 
 def ccw(A, B, C):
@@ -65,9 +65,8 @@ def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0) -> Optional[tuple
         (x2_pad, y2_pad),
     ]
     
-    _wall_margin = 15.0
-    min_x, max_x = _wall_margin, FIELD_WIDTH_CM - _wall_margin
-    min_y, max_y = _wall_margin, FIELD_HEIGHT_CM - _wall_margin
+    min_x, max_x = 15.0, 163.0
+    min_y, max_y = 15.0, 118.0
     
     valid_candidates = []
     for cx, cy in corners:
@@ -120,8 +119,7 @@ class RouteManager:
         scale_x: float,
         scale_y: float,
         settings,
-        current_danger_contours: list = [],
-        small_goal: Optional[GoalDetection] = None,
+        current_danger_contours: list = []
     ) -> Tuple[Optional[BallDetection], str, str]:
         """
         Updates the route planning state machine.
@@ -309,40 +307,6 @@ class RouteManager:
 
         elif self.state == "executing":
             if not self.queue:
-                # Before entering handoff, check whether the straight path to the
-                # alignment point crosses the centre obstacle. If it does, insert a
-                # bypass waypoint so the robot doesn't drive through the cross.
-                if robot_pose is not None and small_goal is not None and small_goal.alignment_point_x is not None:
-                    r_x_cm = (robot_pose.x - PERSPECTIVE_PADDING_PX) / scale_x
-                    r_y_cm = (robot_pose.y - PERSPECTIVE_PADDING_PX) / scale_y
-                    align_x_cm = (small_goal.alignment_point_x - PERSPECTIVE_PADDING_PX) / scale_x
-                    align_y_cm = (small_goal.alignment_point_y - PERSPECTIVE_PADDING_PX) / scale_y
-
-                    frame_width = danger_mask.shape[1] if danger_mask is not None else 1280
-                    frame_height = danger_mask.shape[0] if danger_mask is not None else 960
-                    contours_to_use = self.cumulative_contours if self.cumulative_contours else current_danger_contours
-                    obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
-
-                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles, margin=8.0)
-                    if obs is not None:
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs, margin=8.0)
-                        if wp is not None:
-                            wp_x, wp_y = wp
-                            waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
-                            if math.hypot(wp_x - r_x_cm, wp_y - r_y_cm) > (waypoint_arrival_dist + 4.0):
-                                wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
-                                wp_px_y = int(round(PERSPECTIVE_PADDING_PX + wp_y * scale_y))
-                                wp_ball = BallDetection(
-                                    x=wp_px_x, y=wp_px_y, radius=12.0,
-                                    color_name="waypoint", confidence=1.0, circularity=1.0,
-                                )
-                                self.queue.append(wp_ball)
-                                print(f"[RouteManager] Inserted handoff bypass waypoint at ({wp_px_x}, {wp_px_y})")
-                                # Stay in executing so the robot drives through the waypoint first
-                                return wp_ball, "", ""
-                            else:
-                                print(f"[RouteManager] Handoff bypass waypoint too close, skipping.")
-
                 self.state = "handoff"
                 return None, "s", "executing_done"
             

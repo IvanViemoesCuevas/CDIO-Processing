@@ -1,5 +1,4 @@
 import argparse
-import math
 import time
 import cv2 as cv
 from typing import Optional
@@ -174,12 +173,12 @@ def main() -> int:
                 scale_x=scale_x,
                 scale_y=scale_y,
                 settings=settings,
-                current_danger_contours=danger_contours,
-                small_goal=cached_small_goal,
+                current_danger_contours=danger_contours
             )
 
             # Check waypoint arrival BEFORE deciding command to prevent sending CMD_STOP
             if route_manager.state == "executing" and robot_pose is not None:
+                import math
                 while target_ball is not None and target_ball.color_name == "waypoint":
                     robot_x, robot_y, robot_heading, *_ = corrected_robot_pose_values(
                         robot_pose,
@@ -191,13 +190,13 @@ def main() -> int:
                     dx_cm = dx / scale_x
                     dy_cm = dy / scale_y
                     distance_cm = math.hypot(dx_cm, dy_cm)
-
+                    
                     waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
                     if distance_cm <= waypoint_arrival_dist:
-                        print(f"[main] Arrived at waypoint ({distance_cm:.1f} cm). Popping from queue.")
+                        print(f"[main] Arrived at waypoint at distance {distance_cm:.1f} cm (threshold {waypoint_arrival_dist} cm). Popping from queue.")
                         if route_manager.queue:
                             route_manager.queue.pop(0)
-
+                        
                         # Re-update to get the next target ball
                         target_ball, command_override, reason_override = route_manager.update(
                             current_time=now,
@@ -207,8 +206,7 @@ def main() -> int:
                             scale_x=scale_x,
                             scale_y=scale_y,
                             settings=settings,
-                            current_danger_contours=danger_contours,
-                            small_goal=cached_small_goal,
+                            current_danger_contours=danger_contours
                         )
                     else:
                         break
@@ -280,9 +278,11 @@ def main() -> int:
                 command = decision.command
                 reason = decision.reason
                 if "arrived" in reason and route_manager.state == "executing":
-                    # Waypoint arrival is handled entirely by the pre-check loop above;
-                    # only trigger the commit phase for real ball targets.
-                    if target_ball is not None and target_ball.color_name != "waypoint":
+                    if target_ball is not None and target_ball.color_name == "waypoint":
+                        if route_manager.queue:
+                            route_manager.queue.pop(0)
+                        print("[main] Arrived at waypoint. Proceeding to next target.")
+                    else:
                         route_manager.state = "commit"
 
             if command == candidate_command:
