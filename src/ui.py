@@ -24,37 +24,162 @@ from navigation import (
     get_scales,
 )
 
-def draw_robot_footprint(frame: np.ndarray, x: float, y: float, heading_rad: float, length_cm: float, width_cm: float) -> None:
-    length_cm = max(1.0, float(length_cm))
-    width_cm = max(1.0, float(width_cm))
-    half_length_cm = length_cm / 2.0
-    half_width_cm = width_cm / 2.0
 
-    scale_x, scale_y = get_scales(frame.shape[1], frame.shape[0])
+def draw_danger_zones(
+        frame: np.ndarray,
+        robot_pose: RobotPose,
+        scale_x: float,
+        scale_y: float,
+) -> None:
+    """
+    Draws the two danger zones (wheel and box areas) on the frame for visualization.
+    Both zones are centered at the corrected robot pose center.
+    """
+    if robot_pose is None:
+        return
 
-    heading_x = math.cos(heading_rad)
-    heading_y = math.sin(heading_rad)
-    right_x = -heading_y
-    right_y = heading_x
+    # Get the corrected robot pose (drive center)
+    (
+        corrected_x,
+        corrected_y,
+        corrected_heading,
+        used_forward_px,
+        used_right_px,
+        offset_x,
+        offset_y,
+        normalized_x,
+        normalized_y,
+    ) = corrected_robot_pose_values(
+        robot_pose,
+        frame_width=frame.shape[1],
+        frame_height=frame.shape[0],
+    )
 
-    corners_cm = [
-        (half_length_cm, -half_width_cm),
-        (half_length_cm, half_width_cm),
-        (-half_length_cm, half_width_cm),
-        (-half_length_cm, -half_width_cm),
+    # Robot dimensions in cm (matching vision.py)
+    WHEEL_AREA_WIDTH_CM = 20.0  # Width (left-right)
+    WHEEL_AREA_LENGTH_CM = 7.0  # Length (front-back)
+    BOX_AREA_WIDTH_CM = 12.0  # Width (left-right)
+    BOX_AREA_LENGTH_CM = 42.0  # Length (front-back)
+
+    # Convert cm to pixels using the scale factors
+    wheel_width_px = WHEEL_AREA_WIDTH_CM * scale_x
+    wheel_length_px = WHEEL_AREA_LENGTH_CM * scale_y
+    box_width_px = BOX_AREA_WIDTH_CM * scale_x
+    box_length_px = BOX_AREA_LENGTH_CM * scale_y
+
+    # Get robot heading from corrected pose
+    heading = corrected_heading
+    cos_h = math.cos(heading)
+    sin_h = math.sin(heading)
+
+    # Use the corrected robot center (drive center) as the center of both zones
+    cx = corrected_x
+    cy = corrected_y
+
+    # --- Draw Wheel Danger Zone (Front - Green) ---
+    # The wheel zone is centered at the robot center
+    wheel_corners_local = [
+        (-wheel_length_px / 2, -wheel_width_px / 2),  # Front-left
+        (wheel_length_px / 2, -wheel_width_px / 2),  # Front-right
+        (wheel_length_px / 2, wheel_width_px / 2),  # Back-right
+        (-wheel_length_px / 2, wheel_width_px / 2),  # Back-left
     ]
 
-    corners_px = []
-    for forward_cm, right_cm in corners_cm:
-        dx_cm = forward_cm * heading_x + right_cm * right_x
-        dy_cm = forward_cm * heading_y + right_cm * right_y
-        corners_px.append((
-            int(round(x + dx_cm * scale_x)),
-            int(round(y + dy_cm * scale_y)),
-        ))
+    # Transform local coordinates to image coordinates
+    wheel_corners_img = []
+    for local_x, local_y in wheel_corners_local:
+        # Rotate by heading
+        img_x = cx + local_x * cos_h - local_y * sin_h
+        img_y = cy + local_x * sin_h + local_y * cos_h
+        wheel_corners_img.append((int(img_x), int(img_y)))
 
-    box = np.asarray(corners_px, dtype=np.int32)
-    cv.polylines(frame, [box], True, (0, 255, 255), 2)
+    # Draw wheel zone as a filled polygon with transparency
+    pts = np.array(wheel_corners_img, np.int32)
+    pts = pts.reshape((-1, 1, 2))
+
+    # Create overlay for transparency
+    overlay = frame.copy()
+    cv.fillPoly(overlay, [pts], (0, 255, 0))  # Green for wheel zone
+    cv.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
+
+    # Draw border
+    cv.polylines(frame, [pts], True, (0, 255, 0), 2)
+
+    # Add label at the top of the wheel zone (front)
+    label_x = int(cx + (wheel_length_px / 2 + 10) * cos_h)
+    label_y = int(cy + (wheel_length_px / 2 + 10) * sin_h)
+    cv.putText(
+        frame,
+        "WHEEL ZONE",
+        (label_x - 40, label_y - 10),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 255, 0),
+        2
+    )
+
+    # Add size info
+    cv.putText(
+        frame,
+        f"{WHEEL_AREA_WIDTH_CM}x{WHEEL_AREA_LENGTH_CM}cm",
+        (label_x - 35, label_y + 20),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (0, 255, 0),
+        1
+    )
+
+    # --- Draw Box Danger Zone (Back - Red) ---
+    # The box zone is also centered at the robot center
+    box_corners_local = [
+        (-box_length_px / 2, -box_width_px / 2),  # Front-left
+        (box_length_px / 2, -box_width_px / 2),  # Front-right
+        (box_length_px / 2, box_width_px / 2),  # Back-right
+        (-box_length_px / 2, box_width_px / 2),  # Back-left
+    ]
+
+    # Transform local coordinates to image coordinates
+    box_corners_img = []
+    for local_x, local_y in box_corners_local:
+        img_x = cx + local_x * cos_h - local_y * sin_h
+        img_y = cy + local_x * sin_h + local_y * cos_h
+        box_corners_img.append((int(img_x), int(img_y)))
+
+    # Draw box zone as a filled polygon with transparency
+    pts = np.array(box_corners_img, np.int32)
+    pts = pts.reshape((-1, 1, 2))
+
+    overlay = frame.copy()
+    cv.fillPoly(overlay, [pts], (0, 0, 255))  # Red for box zone
+    cv.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
+
+    # Draw border
+    cv.polylines(frame, [pts], True, (0, 0, 255), 2)
+
+    # Add label at the bottom of the box zone (back)
+    label_x = int(cx - (box_length_px / 2 + 10) * cos_h)
+    label_y = int(cy - (box_length_px / 2 + 10) * sin_h)
+    cv.putText(
+        frame,
+        "BOX ZONE",
+        (label_x - 35, label_y - 10),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 0, 255),
+        2
+    )
+
+    # Add size info
+    cv.putText(
+        frame,
+        f"{BOX_AREA_WIDTH_CM}x{BOX_AREA_LENGTH_CM}cm",
+        (label_x - 30, label_y + 20),
+        cv.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (0, 0, 255),
+        1
+    )
+
 
 def annotate(
         frame: np.ndarray,
@@ -90,19 +215,23 @@ def annotate(
 
     scale_x, scale_y = get_scales(out.shape[1], out.shape[0])
 
+    # Draw danger zones if robot pose is available (using corrected pose)
+    if robot_pose is not None:
+        draw_danger_zones(out, robot_pose, scale_x, scale_y)
+
     # Mark the detected balls
     for b in balls:
         is_danger = False
         if danger_contours is not None:
             is_danger = is_ball_in_danger_zone(b, danger_contours, scale_x)
-
+            
         if is_danger:
             ball_outline_color = (0, 0, 255)  # Red for danger
         else:
             ball_outline_color = (225, 225, 225) if b.color_name == "white" else (80, 120, 255)
-
+            
         cv.circle(out, (b.x, b.y), int(b.radius), ball_outline_color, 1)
-
+        
         status_suffix = " (danger)" if is_danger else ""
         label = (
             f"{b.color_name}{status_suffix} "
@@ -125,29 +254,33 @@ def annotate(
         if route_manager.queue:
             pts = []
             if robot_pose is not None:
-                (rx, ry, *_) = corrected_robot_pose_values(robot_pose, frame_width=out.shape[1], frame_height=out.shape[0])
+                (rx, ry, *_) = corrected_robot_pose_values(robot_pose, frame_width=out.shape[1],
+                                                           frame_height=out.shape[0])
                 pts.append((int(round(rx)), int(round(ry))))
             for qb in route_manager.queue:
                 pts.append((qb.x, qb.y))
-
+            
             for i in range(len(pts) - 1):
-                cv.line(out, pts[i], pts[i+1], (255, 255, 0), 2, cv.LINE_AA)
+                cv.line(out, pts[i], pts[i + 1], (255, 255, 0), 2, cv.LINE_AA)
 
-            # 3. Draw queue order numbers
             # 3. Draw queue order numbers
             for idx, qb in enumerate(route_manager.queue):
                 if qb.color_name == "waypoint":
-                    cv.drawMarker(out, (qb.x, qb.y), (0, 255, 255), markerType=cv.MARKER_DIAMOND, markerSize=14, thickness=2)
-                    cv.putText(out, f"WP#{idx+1}", (qb.x - 18, qb.y - 12), cv.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+                    cv.drawMarker(out, (qb.x, qb.y), (0, 255, 255), markerType=cv.MARKER_DIAMOND, markerSize=14,
+                                  thickness=2)
+                    cv.putText(out, f"WP#{idx + 1}", (qb.x - 18, qb.y - 12), cv.FONT_HERSHEY_SIMPLEX, 0.4,
+                               (0, 255, 255), 1)
                 else:
                     cv.circle(out, (qb.x, qb.y), int(qb.radius) + 5, (0, 255, 255), 2)
-                    cv.putText(out, f"#{idx+1}", (qb.x - 12, qb.y + 4), cv.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 2)
+                    cv.putText(out, f"#{idx + 1}", (qb.x - 12, qb.y + 4), cv.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255),
+                               2)
 
     # Mark target ball
     if target_ball is not None:
         color = (0, 255, 0)
         if target_ball.color_name == "waypoint":
-            cv.drawMarker(out, (target_ball.x, target_ball.y), color, markerType=cv.MARKER_DIAMOND, markerSize=20, thickness=2)
+            cv.drawMarker(out, (target_ball.x, target_ball.y), color, markerType=cv.MARKER_DIAMOND, markerSize=20,
+                          thickness=2)
             cv.putText(
                 out,
                 f"target=WAYPOINT",
@@ -175,7 +308,7 @@ def annotate(
         corners_list = [
             field_corners.topLeft,
             field_corners.topRight,
-            field_corners.bottomRight, # Note: ordering for polylines drawing
+            field_corners.bottomRight,  # Note: ordering for polylines drawing
             field_corners.bottomLeft
         ]
         # Draw field boundary
@@ -186,7 +319,7 @@ def annotate(
         # Draw corners
         for i, pt in enumerate(corners_list):
             cv.circle(out, pt, 5, (0, 255, 0), -1)
-            cv.putText(out, f"C{i+1}", (pt[0]+10, pt[1]+10), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            cv.putText(out, f"C{i + 1}", (pt[0] + 10, pt[1] + 10), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
     # Mark the small goal and its approach/delivery points
     if small_goal is not None:
@@ -250,9 +383,10 @@ def annotate(
     # Mark robot and navigation debug info
     debug_lines: list[str] = []
     if route_manager is not None:
-        debug_lines.append(f"route_state={route_manager.state.upper()} queue_len={len(route_manager.queue)} visited={len(route_manager.visited_positions)}")
+        debug_lines.append(
+            f"route_state={route_manager.state.upper()} queue_len={len(route_manager.queue)} visited={len(route_manager.visited_positions)}")
     if robot_pose is not None:
-        #draw_robot_footprint(out, robot_pose.x, robot_pose.y, robot_pose.heading_rad, ROBOT_LENGTH_CM, ROBOT_WIDTH_CM)
+        #draw_robot_footprint(out, robot_pose, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
         #cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
         #marker_point = (robot_pose.x, robot_pose.y)
 
@@ -282,13 +416,11 @@ def annotate(
         )
         robot_point = (int(round(robot_x)), int(round(robot_y)))
 
-        # Draw robot footprint at corrected location and heading
-        draw_robot_footprint(out, robot_x, robot_y, robot_heading, ROBOT_LENGTH_CM, ROBOT_WIDTH_CM)
-
-        # Draw marker point and correction line
+        # Draw marker point (raw ArUco position)
         cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
         marker_point = (robot_pose.x, robot_pose.y)
 
+        # Draw arrow showing raw heading
         arrow_len = 45
         heading_x = math.cos(robot_pose.heading_rad)
         heading_y = math.sin(robot_pose.heading_rad)
@@ -296,13 +428,13 @@ def annotate(
         y2 = int(robot_pose.y + arrow_len * heading_y)
         cv.arrowedLine(out, (robot_pose.x, robot_pose.y), (x2, y2), (0, 255, 0), 2, tipLength=0.25)
 
+        # Draw line from marker to corrected pose
         cv.line(out, marker_point, robot_point, (255, 255, 0), 2)
         cv.circle(out, robot_point, 7, (255, 255, 0), -1)
         #cv.putText(out, "raw marker", (marker_point[0] + 10, marker_point[1] + 16), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         #cv.putText(out, "corrected ground point", (robot_point[0] + 10, robot_point[1] + 16), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
 
-        # Draw the robot-local axes used for the correction.
-        # Blue = robot-local forward, red = robot-local right.
+        # Draw the robot-local axes for reference
         local_axis_len = 45
         local_forward_end = (
             int(robot_pose.x + local_axis_len * math.cos(robot_heading)),
@@ -343,7 +475,8 @@ def annotate(
             ty2 = int(robot_y + target_arrow_len * math.sin(target_heading))
             cv.arrowedLine(out, robot_point, (tx2, ty2), (255, 0, 255), 2, tipLength=0.25)
 
-            debug_lines.append(f"target=({target_ball.x},{target_ball.y}) dx={dx_cm:.1f} dy={dy_cm:.1f} d={distance_cm:.1f}cm")
+            debug_lines.append(
+                f"target=({target_ball.x},{target_ball.y}) dx={dx_cm:.1f} dy={dy_cm:.1f} d={distance_cm:.1f}cm")
             debug_lines.append(f"target_heading={math.degrees(target_heading):.1f}deg err={heading_error_deg:.1f}deg")
             debug_lines.append(
                 f"calib heading_offset={MARKER_HEADING_OFFSET_DEG:.1f}deg base_fwd={MARKER_TO_DRIVE_CENTER_FORWARD_PX:.0f}px base_right={MARKER_TO_DRIVE_CENTER_RIGHT_PX:.0f}px"
@@ -367,7 +500,7 @@ def annotate(
             #if settings is not None:
             #    debug_lines.append(f"align_deadband={settings.align_deadband_px}px target_radius={settings.target_radius_px}px")
 
-    # Draw danger zones
+    # Draw danger contours (red mask outlines)
     if danger_contours is not None:
         cv.drawContours(out, danger_contours, -1, (0, 0, 255), 2)
 
