@@ -1,4 +1,5 @@
 import argparse
+import math
 import time
 import cv2 as cv
 from typing import Optional
@@ -173,12 +174,12 @@ def main() -> int:
                 scale_x=scale_x,
                 scale_y=scale_y,
                 settings=settings,
-                current_danger_contours=danger_contours
+                current_danger_contours=danger_contours,
+                small_goal=cached_small_goal,
             )
 
             # Check waypoint arrival BEFORE deciding command to prevent sending CMD_STOP
             if route_manager.state == "executing" and robot_pose is not None:
-                import math
                 while target_ball is not None and target_ball.color_name == "waypoint":
                     robot_x, robot_y, robot_heading, *_ = corrected_robot_pose_values(
                         robot_pose,
@@ -206,7 +207,8 @@ def main() -> int:
                             scale_x=scale_x,
                             scale_y=scale_y,
                             settings=settings,
-                            current_danger_contours=danger_contours
+                            current_danger_contours=danger_contours,
+                            small_goal=cached_small_goal,
                         )
                     else:
                         break
@@ -278,11 +280,9 @@ def main() -> int:
                 command = decision.command
                 reason = decision.reason
                 if "arrived" in reason and route_manager.state == "executing":
-                    if target_ball is not None and target_ball.color_name == "waypoint":
-                        if route_manager.queue:
-                            route_manager.queue.pop(0)
-                        print("[main] Arrived at waypoint. Proceeding to next target.")
-                    else:
+                    # Waypoint arrival is handled entirely by the pre-check loop above;
+                    # only trigger the commit phase for real ball targets.
+                    if target_ball is not None and target_ball.color_name != "waypoint":
                         route_manager.state = "commit"
 
             if command == candidate_command:

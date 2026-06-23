@@ -30,6 +30,7 @@ class Settings:
     pose_turn_deadband_deg: float = 5.0
     pose_arrival_distance_cm: float = 20.0
     waypoint_arrival_distance_cm: float = 8.0
+    obstacle_avoidance_margin_cm: float = 15.0
 
     # Danger detection
     min_obstacle_area: int = 400
