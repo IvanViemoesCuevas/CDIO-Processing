@@ -7,7 +7,7 @@ import platform
 
 from config import *
 from robot_client import RobotClient
-from models import NavigationContext, NavigationState, GoalDetection
+from models import NavigationContext, NavigationState, GoalDetection, RobotPose
 from navigation import decide_command, get_scales, decide_immediate_command, corrected_robot_pose_values
 from route_manager import RouteManager
 from ui import annotate
@@ -143,9 +143,21 @@ def main() -> int:
                 print(f"Alignment point: ({cached_small_goal.alignment_point_x}, {cached_small_goal.alignment_point_y})")
                 print(f"Delivery point: ({cached_small_goal.delivery_point_x}, {cached_small_goal.delivery_point_y})")
 
-
-            # Other detections (unchanged)
             robot_pose = detect_robot_pose(frame, settings)
+            danger_robot_pose = robot_pose
+
+            if robot_pose is not None:
+                corrected_x, corrected_y, corrected_heading, *_ = corrected_robot_pose_values(
+                    robot_pose,
+                    frame_width=frame.shape[1],
+                    frame_height=frame.shape[0],
+                )
+                danger_robot_pose = RobotPose(
+                    x=int(round(corrected_x)),
+                    y=int(round(corrected_y)),
+                    heading_rad=corrected_heading,
+                    confidence=robot_pose.confidence,
+                )
 
             tuning = tuner.read() if tuner is not None else default_tuning
 
@@ -157,7 +169,7 @@ def main() -> int:
                 white_range=tuning.white_range,
                 white_sat_split=tuning.white_sat_split,
             )
-            danger, danger_state, danger_mask, danger_contours = detect_danger_zones(frame, settings, robot_pose)
+            danger, danger_state, danger_mask, danger_contours = detect_danger_zones(frame, settings, danger_robot_pose)
 
             # Update handoff manager and check for handoff condition
             handoff_manager.update(balls)
@@ -165,7 +177,7 @@ def main() -> int:
             # Decide target and command override from RouteManager
             scale_x, scale_y = get_scales(frame.shape[1], frame.shape[0])
             now = time.monotonic()
-            
+
             target_ball, command_override, reason_override = route_manager.update(
                 current_time=now,
                 balls=balls,
@@ -191,13 +203,13 @@ def main() -> int:
                     dx_cm = dx / scale_x
                     dy_cm = dy / scale_y
                     distance_cm = math.hypot(dx_cm, dy_cm)
-                    
+
                     waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
                     if distance_cm <= waypoint_arrival_dist:
                         print(f"[main] Arrived at waypoint at distance {distance_cm:.1f} cm (threshold {waypoint_arrival_dist} cm). Popping from queue.")
                         if route_manager.queue:
                             route_manager.queue.pop(0)
-                        
+
                         # Re-update to get the next target ball
                         target_ball, command_override, reason_override = route_manager.update(
                             current_time=now,
@@ -227,8 +239,8 @@ def main() -> int:
             if command_override:
                 # If it's a commit forward command, we still respect danger zones for safety!
                 if command_override == "i" and (
-                    (danger_state is not None and danger_state.too_close) or 
-                    (danger.front and danger.center) or 
+                    (danger_state is not None and danger_state.too_close) or
+                    (danger.front and danger.center) or
                     (danger.left and danger.right)
                 ):
                     decision = decide_immediate_command(
@@ -259,7 +271,7 @@ def main() -> int:
                     if target_ball is not None
                     else None
                 )
-                
+
                 decision, nav_state = decide_command(
                     context=NavigationContext(
                         frame_width=frame.shape[1],
