@@ -16,6 +16,10 @@ from models import (
 
 MARKER_HEADING_OFFSET_DEG = 0.0
 
+# Exponential moving average state for heading smoothing.
+# Smoothing suppresses frame-to-frame ArUco jitter that causes left/right oscillation.
+_smoothed_heading: float | None = None
+
 # Physical mount offset from the ArUco marker to the robot's real drive/rotation center.
 # These are robot-local offsets and DO rotate when the robot turns:
 #   forward_px = along robot forward
@@ -40,10 +44,26 @@ def normalize_angle_rad(angle: float) -> float:
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
-def corrected_robot_pose_values(robot_pose, frame_width: int | None = None, frame_height: int | None = None):
-    corrected_heading = normalize_angle_rad(
+def corrected_robot_pose_values(robot_pose, frame_width: int | None = None, frame_height: int | None = None, settings=None):
+    global _smoothed_heading
+
+    raw_heading = normalize_angle_rad(
         robot_pose.heading_rad + math.radians(MARKER_HEADING_OFFSET_DEG)
     )
+
+    # Exponential moving average to suppress ArUco jitter.
+    alpha = settings.heading_ema_alpha if settings is not None and hasattr(settings, 'heading_ema_alpha') else 0.65
+    if _smoothed_heading is None:
+        _smoothed_heading = raw_heading
+    else:
+        # Use sin/cos averaging to correctly handle the -π/π wraparound.
+        prev = _smoothed_heading
+        _smoothed_heading = math.atan2(
+            alpha * math.sin(raw_heading) + (1.0 - alpha) * math.sin(prev),
+            alpha * math.cos(raw_heading) + (1.0 - alpha) * math.cos(prev),
+        )
+
+    corrected_heading = _smoothed_heading
 
     # Robot-local unit vectors in image coordinates.
     # These rotate with the ArUco/robot heading.
@@ -169,11 +189,17 @@ def decide_immediate_command(
         dy_cm = dy / scale_y
         distance_cm = math.hypot(dx_cm, dy_cm)
 
-        # Hysteresis for turning
-        turn_hysteresis_factor = 1.5
+        # Heading hysteresis — widen the deadband when already going forward so minor
+        # jitter does not cause constant left/right micro-corrections that walk the
+        # robot into walls.  Also widen when the pose confidence is flagged as low
+        # (confidence == -1 is the sentinel set by detect_robot_pose).
+        turn_hysteresis_factor = 2.5  # Was 1.5
         effective_turn_deadband = turn_deadband
         if state.last_command == CMD_FORWARD:
             effective_turn_deadband *= turn_hysteresis_factor
+        # Extra widening when ArUco detection quality is uncertain
+        if context.robot_pose is not None and context.robot_pose.confidence < 0:
+            effective_turn_deadband = max(effective_turn_deadband, turn_deadband * 2.0)
 
         if heading_error_deg < -effective_turn_deadband:
             return NavigationResult(CMD_LEFT, f"pose:left err={heading_error_deg:.1f}")

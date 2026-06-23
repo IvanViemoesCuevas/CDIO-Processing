@@ -32,16 +32,29 @@ def segment_intersects_box(xa, ya, xb, yb, box, margin=8.0):
         return True
     return False
 
+
+
 def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, frame_height: int, scale_x: float, scale_y: float) -> list[tuple[float, float, float, float]]:
+    """Return axis-aligned bounding boxes (in cm) for the centre obstacle contours.
+
+    Uses convex hull before bounding rect so a cross/plus shape gets a tighter
+    box — the raw bounding rect of a cross covers the full cross extent (both arms),
+    giving an oversized square that forces the route far around the obstacle.
+    The hull removes the concave notches at the arm intersections, resulting in a
+    box that fits just the actual cross footprint.
+    Wall-segment contours (spanning >50% of either frame dimension) are skipped.
+    """
     obstacles = []
     for c in danger_contours:
         x_px, y_px, w_px, h_px = cv.boundingRect(c)
-        if w_px >= 0.8 * frame_width or h_px >= 0.8 * frame_height:
+        if w_px >= 0.5 * frame_width or h_px >= 0.5 * frame_height:
             continue
-        x1 = (x_px - PERSPECTIVE_PADDING_PX) / scale_x
-        y1 = (y_px - PERSPECTIVE_PADDING_PX) / scale_y
-        x2 = (x_px + w_px - PERSPECTIVE_PADDING_PX) / scale_x
-        y2 = (y_px + h_px - PERSPECTIVE_PADDING_PX) / scale_y
+        hull = cv.convexHull(c)
+        hx, hy, hw, hh = cv.boundingRect(hull)
+        x1 = (hx - PERSPECTIVE_PADDING_PX) / scale_x
+        y1 = (hy - PERSPECTIVE_PADDING_PX) / scale_y
+        x2 = (hx + hw - PERSPECTIVE_PADDING_PX) / scale_x
+        y2 = (hy + hh - PERSPECTIVE_PADDING_PX) / scale_y
         obstacles.append((x1, y1, x2, y2))
     return obstacles
 
@@ -51,43 +64,58 @@ def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=8.0):
             return obs
     return None
 
-def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0) -> Optional[tuple[float, float]]:
+def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0, wall_margin=22.0) -> Optional[tuple[float, float]]:
+    """Find the shortest valid detour waypoint around an obstacle box.
+
+    Tries four corners AND four edge midpoints of the padded obstacle box.
+    Midpoints let the route pass neatly past an arm tip of a cross rather
+    than having to reach all the way to a corner.
+    """
     x1, y1, x2, y2 = obstacle
     x1_pad = x1 - margin
     y1_pad = y1 - margin
     x2_pad = x2 + margin
     y2_pad = y2 + margin
-    
-    corners = [
+    mid_x = (x1_pad + x2_pad) / 2.0
+    mid_y = (y1_pad + y2_pad) / 2.0
+
+    candidates = [
+        # Four corners
         (x1_pad, y1_pad),
         (x2_pad, y1_pad),
         (x1_pad, y2_pad),
         (x2_pad, y2_pad),
+        # Four edge midpoints — key for cross shapes
+        (mid_x,  y1_pad),
+        (mid_x,  y2_pad),
+        (x1_pad, mid_y),
+        (x2_pad, mid_y),
     ]
-    
-    _wall_margin = 15.0
-    min_x, max_x = _wall_margin, FIELD_WIDTH_CM - _wall_margin
-    min_y, max_y = _wall_margin, FIELD_HEIGHT_CM - _wall_margin
-    
+
+    min_x, max_x = wall_margin, FIELD_WIDTH_CM - wall_margin
+    min_y, max_y = wall_margin, FIELD_HEIGHT_CM - wall_margin
+
     valid_candidates = []
-    for cx, cy in corners:
+    for cx, cy in candidates:
         if not (min_x <= cx <= max_x and min_y <= cy <= max_y):
             continue
-        if segment_intersects_box(xa, ya, cx, cy, obstacle, margin=3.0):
+        # The leg from start→waypoint and waypoint→target must not re-enter the box.
+        if segment_intersects_box(xa, ya, cx, cy, obstacle, margin=2.0):
             continue
-        if segment_intersects_box(cx, cy, xb, yb, obstacle, margin=3.0):
+        if segment_intersects_box(cx, cy, xb, yb, obstacle, margin=2.0):
             continue
         dist = math.hypot(cx - xa, cy - ya) + math.hypot(xb - cx, yb - cy)
         valid_candidates.append(((cx, cy), dist))
-        
+
     if not valid_candidates:
-        for cx, cy in corners:
+        # Fallback: accept any candidate inside the field even if path still clips.
+        for cx, cy in candidates:
             if min_x <= cx <= max_x and min_y <= cy <= max_y:
                 dist = math.hypot(cx - xa, cy - ya) + math.hypot(xb - cx, yb - cy)
                 valid_candidates.append(((cx, cy), dist))
-                
+
     if valid_candidates:
-        valid_candidates.sort(key=lambda x: x[1])
+        valid_candidates.sort(key=lambda v: v[1])
         return valid_candidates[0][0]
     return None
 
@@ -199,8 +227,13 @@ class RouteManager:
             planned_balls = []
             contours_to_use = self.cumulative_contours if self.cumulative_contours else current_danger_contours
             for ub in unique_balls:
-                # Keep balls detected in at least 2 frames to filter transient noise
-                if ub['count'] >= 2:
+                # Keep balls detected in at least 1 frame (count >= 1).
+                # The old threshold of 2 was too aggressive — at 8-10 FPS over 2 s a
+                # ball near the frame edge may only be seen 3-4 times, and if the
+                # cluster gets split into two sub-clusters each gets count=1 or 2.
+                # False positives are filtered downstream by danger-zone and
+                # circularity checks; we don't need count to be the gatekeeper.
+                if ub['count'] >= 1:
                     pixel_x = int(round(PERSPECTIVE_PADDING_PX + ub['x_cm'] * scale_x))
                     pixel_y = int(round(PERSPECTIVE_PADDING_PX + ub['y_cm'] * scale_y))
                     
@@ -267,6 +300,7 @@ class RouteManager:
             obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
             print(f"[RouteManager] Detected {len(obstacles)} middle obstacles.")
             
+            wall_margin = getattr(settings, 'waypoint_wall_margin_cm', 22.0)
             final_queue = []
             curr_x, curr_y = start_x, start_y
             
@@ -274,38 +308,65 @@ class RouteManager:
                 target_x_cm = (target.x - PERSPECTIVE_PADDING_PX) / scale_x
                 target_y_cm = (target.y - PERSPECTIVE_PADDING_PX) / scale_y
                 
-                obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
-                if obs is not None:
-                    wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
-                    if wp is not None:
-                        wp_x, wp_y = wp
-                        wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
-                        wp_px_y = int(round(PERSPECTIVE_PADDING_PX + wp_y * scale_y))
-                        wp_ball = BallDetection(
-                            x=wp_px_x,
-                            y=wp_px_y,
-                            radius=12.0,
-                            color_name="waypoint",
-                            confidence=1.0,
-                            circularity=1.0
-                        )
-                        final_queue.append(wp_ball)
-                        print(f"[RouteManager] Inserted waypoint at ({wp_px_x}, {wp_px_y}) to avoid obstacle.")
+                # Multi-pass: keep inserting waypoints until the path to the next
+                # destination is clear of all known obstacles.
+                seg_start_x, seg_start_y = curr_x, curr_y
+                seg_end_x, seg_end_y = target_x_cm, target_y_cm
+                MAX_BYPASS_PASSES = 4
+                for _pass in range(MAX_BYPASS_PASSES):
+                    obs = check_route_segment_for_obstacles(
+                        seg_start_x, seg_start_y, seg_end_x, seg_end_y,
+                        obstacles, margin=settings.obstacle_avoidance_margin_cm,
+                    )
+                    if obs is None:
+                        break
+                    wp = find_bypass_waypoint(
+                        seg_start_x, seg_start_y, seg_end_x, seg_end_y,
+                        obs, margin=settings.obstacle_avoidance_margin_cm,
+                        wall_margin=wall_margin,
+                    )
+                    if wp is None:
+                        print(f"[RouteManager] Could not find bypass waypoint on pass {_pass+1}, skipping.")
+                        break
+                    wp_x, wp_y = wp
+                    wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
+                    wp_px_y = int(round(PERSPECTIVE_PADDING_PX + wp_y * scale_y))
+                    wp_ball = BallDetection(
+                        x=wp_px_x, y=wp_px_y, radius=12.0,
+                        color_name="waypoint", confidence=1.0, circularity=1.0,
+                    )
+                    final_queue.append(wp_ball)
+                    print(f"[RouteManager] Inserted waypoint at ({wp_px_x}, {wp_px_y}) (pass {_pass+1}).")
+                    # Next pass: check from the new waypoint to the target
+                    seg_start_x, seg_start_y = wp_x, wp_y
                 
                 final_queue.append(target)
                 curr_x, curr_y = target_x_cm, target_y_cm
                 
             self.queue = final_queue
             self.visited_positions = []
-            
+
             if not self.queue:
-                print("[RouteManager] No balls detected. Transitioning to executing to verify path to handoff.")
-                self.state = "executing"
-                self.missing_frames = 0
+                # No collectible balls found. Before entering handoff (which drives
+                # toward the goal wall and triggers danger:front), do one more scan
+                # to confirm the field is genuinely empty.  This prevents a single
+                # bad planning pass — e.g. all balls filtered by the danger-zone
+                # check — from sending the robot straight into goal-approach mode.
+                if not getattr(self, '_empty_rescan_done', False):
+                    print("[RouteManager] No balls found in plan. Re-scanning to confirm field is empty.")
+                    self._empty_rescan_done = True
+                    self.state = "scanning"
+                    self.scan_start_time = None
+                else:
+                    print("[RouteManager] Confirmed: no collectible balls. Transitioning to handoff.")
+                    self._empty_rescan_done = False
+                    self.state = "executing"
+                    self.missing_frames = 0
             else:
+                self._empty_rescan_done = False
                 self.state = "executing"
                 self.missing_frames = 0
-                
+
             return None, "s", "planning"
 
         elif self.state == "executing":
@@ -326,7 +387,7 @@ class RouteManager:
 
                     obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
                     if obs is not None:
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
+                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm, wall_margin=getattr(settings, 'waypoint_wall_margin_cm', 22.0))
                         if wp is not None:
                             wp_x, wp_y = wp
                             waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
@@ -398,7 +459,7 @@ class RouteManager:
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
                     obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
                     if obs is not None:
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
+                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm, wall_margin=getattr(settings, 'waypoint_wall_margin_cm', 22.0))
                         if wp is not None:
                             wp_x, wp_y = wp
                             # Only insert if the waypoint is not already extremely close to the robot
@@ -440,13 +501,40 @@ class RouteManager:
             # Return target to follow
             return self.queue[0], "", ""
         elif self.state == "commit":
-            # Driving forward during commit phase
+            # Driving forward during commit phase.
+            # Safety: if a danger zone is detected while we are committed, abort
+            # immediately so the robot does not drive blind into an obstacle or wall.
             if self.commit_start_time is None:
                 self.commit_start_time = current_time
                 print("[RouteManager] Entering commit phase (driving forward)...")
-                
+
+            # Check live danger contours — if any red pixel is very close, bail out.
+            if danger_mask is not None:
+                ys_d, xs_d = np.where(danger_mask > 0)
+                if xs_d.size > 0 and robot_pose is not None:
+                    # Quick nearest-distance check (pixel space is fine here).
+                    dists = np.hypot(xs_d.astype(float) - robot_pose.x,
+                                     ys_d.astype(float) - robot_pose.y)
+                    nearest_px = float(dists.min())
+                    # Convert to cm using x-scale as an approximation.
+                    nearest_cm = nearest_px / scale_x
+                    abort_margin = getattr(settings, 'danger_too_close_cm', 10.0) * 2.5
+                    if nearest_cm < abort_margin:
+                        print(f"[RouteManager] Commit aborted — obstacle {nearest_cm:.1f} cm away. Replanning.")
+                        self.commit_start_time = None
+                        self.missing_frames = 0
+                        # Pop the ball we were committing to and go back to executing.
+                        if self.queue:
+                            target = self.queue.pop(0)
+                            t_x_cm = (target.x - PERSPECTIVE_PADDING_PX) / scale_x
+                            t_y_cm = (target.y - PERSPECTIVE_PADDING_PX) / scale_y
+                            if target.color_name != "waypoint":
+                                self.visited_positions.append((t_x_cm, t_y_cm))
+                        self.state = "executing"
+                        return None, "s", "commit_aborted_danger"
+
             if current_time - self.commit_start_time >= settings.commit_forward_window_sec:
-                # Commit phase complete
+                # Commit phase complete normally
                 if self.queue:
                     target = self.queue.pop(0)
                     t_x_cm = (target.x - PERSPECTIVE_PADDING_PX) / scale_x
@@ -457,9 +545,7 @@ class RouteManager:
                 
                 self.commit_start_time = None
                 self.missing_frames = 0
-                
                 self.state = "executing"
-                
                 return None, "s", "commit_done"
                 
             return None, "i", "commit_active"

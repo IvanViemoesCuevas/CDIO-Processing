@@ -30,16 +30,27 @@ class Settings:
     pose_turn_deadband_deg: float = 5.0
     pose_arrival_distance_cm: float = 20.0
     waypoint_arrival_distance_cm: float = 8.0
-    obstacle_avoidance_margin_cm: float = 15.0
+    obstacle_avoidance_margin_cm: float = 8.0   # Clearance added around the centre obstacle bounding box
     robot_length_cm: float = 43.0
     robot_width_cm: float = 20.0
 
     # Danger detection
     min_obstacle_area: int = 400
+    # max_obstacle_area_fraction: red blobs covering more than this fraction of the
+    # frame are treated as field walls, not obstacles, and are excluded from live
+    # danger-flag logic.  Keeps the red boundary tape from being treated as a hazard.
+    max_obstacle_area_fraction: float = 0.12
     danger_center_deadband_cm: float = 15.0
-    danger_distance_cm: float = 15.0
-    danger_too_close_cm: float = 10.0
+    danger_distance_cm: float = 10.0       # Trigger danger flags 10 cm from robot body
+    danger_too_close_cm: float = 6.0       # Emergency stop/reverse threshold
     danger_rear_ignore_cm: float = 10.0
+
+    # Heading smoothing (EMA) — prevents ArUco jitter from causing left/right oscillation.
+    # 1.0 = no smoothing (raw), 0.0 = frozen. Values around 0.6–0.8 work well.
+    heading_ema_alpha: float = 0.65
+
+    # Wall clearance used inside find_bypass_waypoint — increase if robot clips walls.
+    waypoint_wall_margin_cm: float = 14.0  # Min distance from field edge for planned waypoints
 
     # Goal detection settings
     min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal

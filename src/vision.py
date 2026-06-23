@@ -553,11 +553,19 @@ def detect_danger_zones(
     filtered_mask = np.zeros_like(raw_mask)
     zone_w = max(1, w // 3)
 
-    # Keep only sufficiently large connected red regions while preserving holes.
+    # Keep only red regions large enough to be real obstacles but small enough to
+    # NOT be the field boundary tape.  The boundary forms a near-full-perimeter band
+    # that covers a large fraction of the frame; ignoring it prevents the robot from
+    # seeing the wall as a "danger" and reversing away from it indefinitely.
+    frame_area = h * w
+    max_obstacle_area = int(frame_area * getattr(settings, 'max_obstacle_area_fraction', 0.12))
     num_labels, labels, stats, _ = cv.connectedComponentsWithStats(raw_mask, connectivity=8)
     for label in range(1, num_labels):
         area = int(stats[label, cv.CC_STAT_AREA])
         if area < settings.min_obstacle_area:
+            continue
+        if area > max_obstacle_area:
+            # This blob is too large to be the cross/obstacle — it's a wall segment.
             continue
         filtered_mask[labels == label] = 255
 
