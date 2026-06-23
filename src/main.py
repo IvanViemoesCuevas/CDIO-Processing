@@ -322,7 +322,6 @@ def main() -> int:
                 last_send_command = command_to_send
                 last_send_time = now_time
 
-            # Annotate frame with detections and command
             display = annotate(
                 frame=frame,
                 command=command,
@@ -337,6 +336,7 @@ def main() -> int:
                 field_corners=field_corners,
                 small_goal=cached_small_goal,
                 route_manager=route_manager,
+                settings=settings,
             )
             cv.imshow("Golfbot", display)
 

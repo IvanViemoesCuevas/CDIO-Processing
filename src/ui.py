@@ -5,7 +5,7 @@ import numpy as np
 import cv2 as cv
 
 from models import *
-from config import PERSPECTIVE_PADDING_PX
+from config import PERSPECTIVE_PADDING_PX, Settings
 from vision import find_danger_perspective_points, is_ball_in_danger_zone
 from typing import Optional
 
@@ -45,6 +45,7 @@ def annotate(
         field_corners: Optional[FieldCorners] = None,
         small_goal: Optional[GoalDetection] = None,
         route_manager: Optional[object] = None,
+        settings: Optional[Settings] = None,
 ) -> np.ndarray:
     out = frame.copy()
 
@@ -258,7 +259,9 @@ def annotate(
         robot_point = (int(round(robot_x)), int(round(robot_y)))
 
         # Draw robot footprint at corrected location and heading
-        draw_robot_footprint(out, robot_x, robot_y, robot_heading, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
+        robot_length_px = settings.robot_length_cm * scale_x if settings is not None else ROBOT_LENGTH_PX
+        robot_width_px = settings.robot_width_cm * scale_y if settings is not None else ROBOT_WIDTH_PX
+        draw_robot_footprint(out, robot_x, robot_y, robot_heading, robot_length_px, robot_width_px)
 
         # Draw marker point and correction line
         cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)

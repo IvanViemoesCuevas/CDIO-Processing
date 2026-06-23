@@ -31,6 +31,8 @@ class Settings:
     pose_arrival_distance_cm: float = 20.0
     waypoint_arrival_distance_cm: float = 8.0
     obstacle_avoidance_margin_cm: float = 15.0
+    robot_length_cm: float = 43.0
+    robot_width_cm: float = 20.0
 
     # Danger detection
     min_obstacle_area: int = 400

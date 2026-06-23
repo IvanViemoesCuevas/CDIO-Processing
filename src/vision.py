@@ -580,11 +580,6 @@ def detect_danger_zones(
         
         dx_cm = dx_img / scale_x
         dy_cm = dy_img / scale_y
-        dist2_cm: NDArray[np.float32] = dx_cm * dx_cm + dy_cm * dy_cm
-        nearest_index = int(np.argmin(dist2_cm))
-
-        state.nearest_distance_cm = float(np.sqrt(dist2_cm[nearest_index]))
-        state.nearest_point = (int(xs[nearest_index]), int(ys[nearest_index]))
 
         heading_x = math.cos(robot_pose.heading_rad)
         heading_y = math.sin(robot_pose.heading_rad)
@@ -600,21 +595,31 @@ def detect_danger_zones(
             dtype=np.float32,
         )
 
-        near = dist2_cm <= float(settings.danger_distance_cm * settings.danger_distance_cm)
+        half_l = float(settings.robot_length_cm) / 2.0
+        half_w = float(settings.robot_width_cm) / 2.0
+
+        # Calculate exact distance from each pixel to the rectangular robot body boundary
+        dist_r = np.maximum(0.0, np.abs(right_body_cm) - half_w)
+        dist_f = np.maximum(0.0, np.abs(forward_body_cm) - half_l)
+        pixel_dists_cm = np.sqrt(dist_r * dist_r + dist_f * dist_f)
+
+        nearest_index = int(np.argmin(pixel_dists_cm))
+        state.nearest_distance_cm = float(pixel_dists_cm[nearest_index])
+        state.nearest_point = (int(xs[nearest_index]), int(ys[nearest_index]))
+
+        near = pixel_dists_cm <= float(settings.danger_distance_cm)
         if np.any(near):
-            forward_near = forward_body_cm[near]
-            right_near = right_body_cm[near]
-            flags.front = bool(np.any(forward_near > float(settings.danger_center_deadband_cm)))
-            flags.back = bool(np.any(forward_near < -float(settings.danger_center_deadband_cm)))
-            flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_cm)))
-            flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_cm)))
-            flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_cm)))
+            flags.front = bool(np.any(forward_body_cm[near] > half_l))
+            flags.back = bool(np.any(forward_body_cm[near] < -half_l))
+            flags.center = bool(np.any(np.abs(right_body_cm[near]) <= float(settings.danger_center_deadband_cm)))
+            flags.left = bool(np.any(right_body_cm[near] < -half_w))
+            flags.right = bool(np.any(right_body_cm[near] > half_w))
 
         state.nearest_dx_body = float(right_body_cm[nearest_index])
         state.nearest_dy_body = float(forward_body_cm[nearest_index])
         state.too_close = (
                 state.nearest_distance_cm <= float(settings.danger_too_close_cm)
-                and state.nearest_dy_body >= -float(settings.danger_rear_ignore_cm)
+                and state.nearest_dy_body >= -(half_l + float(settings.danger_rear_ignore_cm))
         )
     else:
         zone_h = max(1, h // 3)
