@@ -25,13 +25,6 @@ YOLO_MODEL_PATH = "my_model.pt"
 # Lazily-loaded YOLO model instance
 _yolo_model = None
 
-# PERSPECTIVE_SRC_POINTS = np.float32([
-#    [350, 130],   # top-left
-#    [1540, 150],  # top-right
-#    [1550, 1050],  # bottom-right
-#    [300, 1030],   # bottom-left
-# ])
-
 PERSPECTIVE_OUTPUT_SIZE: tuple[int, int] | None = None
 
 # Increase this if the warped image cuts off the border/corners.
@@ -45,7 +38,6 @@ _smoothed_perspective_points: np.ndarray | None = None
 
 
 def correct_perspective(frame: np.ndarray) -> np.ndarray:
-    # detected_src = find_danger_perspective_points(frame)
     global _perspective_frame_counter, _smoothed_perspective_points
 
     should_update = (
@@ -155,9 +147,6 @@ def build_ball_mask(
 ) -> np.ndarray:
     """Convenience wrapper that returns only the merged orange+white mask."""
     orange, white, mask = build_ball_masks(hsv_frame, orange_range=orange_range, white_range=white_range)
-    # cv.imshow("orange-mask", orange)
-    # cv.imshow("white-mask", white)
-    # cv.imshow("combined-mask", orange)
     return mask
 
 
@@ -522,8 +511,6 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
         return None
     target_index = int(match[0])
 
-    # FIXME maybe use the actual corner locations instead of just creating a square (Could also calculate the confidence)
-
     pts = corners[target_index][0]
     cx = int(np.mean(pts[:, 0]))
     cy = int(np.mean(pts[:, 1]))
@@ -547,6 +534,21 @@ def build_danger_mask(frame: np.ndarray) -> np.ndarray:
     return mask
 
 
+def is_point_in_robot_zone(
+        forward_cm: float,
+        right_cm: float,
+        zone_width_cm: float,
+        zone_length_cm: float
+) -> bool:
+    """
+    Check if a point in robot-local coordinates is within a rectangular zone.
+    The zone is centered at the robot center.
+    """
+    half_width = zone_width_cm / 2.0
+    half_length = zone_length_cm / 2.0
+    return (abs(forward_cm) <= half_length) and (abs(right_cm) <= half_width)
+
+
 def detect_danger_zones(
         frame: np.ndarray,
         settings: Settings,
@@ -557,7 +559,6 @@ def detect_danger_zones(
 
     flags = DangerFlags()
     filtered_mask = np.zeros_like(raw_mask)
-    zone_w = max(1, w // 3)
 
     # Keep only sufficiently large connected red regions while preserving holes.
     num_labels, labels, stats, _ = cv.connectedComponentsWithStats(raw_mask, connectivity=8)
@@ -576,34 +577,36 @@ def detect_danger_zones(
         return flags, state, filtered_mask, kept_contours
 
     if robot_pose is not None:
+        from navigation import corrected_robot_pose_values, get_scales
+
+        # Get corrected robot pose
+        (corrected_x, corrected_y, corrected_heading, *_) = corrected_robot_pose_values(
+            robot_pose,
+            frame_width=w,
+            frame_height=h,
+        )
+
         width = w - 2 * PERSPECTIVE_PADDING_PX
         height = h - 2 * PERSPECTIVE_PADDING_PX
         scale_x = width / FIELD_WIDTH_CM
         scale_y = height / FIELD_HEIGHT_CM
 
         # Robot dimensions in cm
-        # Wheel area: 20 cm wide (left-right) x 7 cm long (front-back)
-        # Box area: 12 cm wide (left-right) x 42 cm long (front-back)
         WHEEL_AREA_WIDTH_CM = 20.0
         WHEEL_AREA_LENGTH_CM = 7.0
         BOX_AREA_WIDTH_CM = 12.0
         BOX_AREA_LENGTH_CM = 42.0
 
-        # Robot center offset: wheel area is at the front, box area is at the back
-        # Assuming robot center is at the middle of the robot
-        WHEEL_AREA_CENTER_OFFSET_CM = 15.0  # Wheel area center is 15 cm forward of robot center
-        BOX_AREA_CENTER_OFFSET_CM = -10.0  # Box area center is 10 cm backward of robot center
-
-        # Convert danger points to robot-local coordinates
-        dx_img: NDArray[np.float32] = np.asarray(xs, dtype=np.float32) - np.float32(robot_pose.x)
-        dy_img: NDArray[np.float32] = np.asarray(ys, dtype=np.float32) - np.float32(robot_pose.y)
+        # Convert danger points to robot-local coordinates using corrected pose
+        dx_img: NDArray[np.float32] = np.asarray(xs, dtype=np.float32) - np.float32(corrected_x)
+        dy_img: NDArray[np.float32] = np.asarray(ys, dtype=np.float32) - np.float32(corrected_y)
 
         dx_cm = dx_img / scale_x
         dy_cm = dy_img / scale_y
 
-        # Robot heading vectors
-        heading_x = math.cos(robot_pose.heading_rad)
-        heading_y = math.sin(robot_pose.heading_rad)
+        # Robot heading vectors from corrected pose
+        heading_x = math.cos(corrected_heading)
+        heading_y = math.sin(corrected_heading)
         right_x = -heading_y
         right_y = heading_x
 
@@ -617,34 +620,20 @@ def detect_danger_zones(
             dtype=np.float32,
         )
 
-        # Check if any point is in the wheel danger zone (front)
-        wheel_forward_min = WHEEL_AREA_CENTER_OFFSET_CM - WHEEL_AREA_LENGTH_CM / 2.0
-        wheel_forward_max = WHEEL_AREA_CENTER_OFFSET_CM + WHEEL_AREA_LENGTH_CM / 2.0
-        wheel_right_min = -WHEEL_AREA_WIDTH_CM / 2.0
-        wheel_right_max = WHEEL_AREA_WIDTH_CM / 2.0
+        # Check which points are in the wheel zone
+        in_wheel_zone = np.array([
+            is_point_in_robot_zone(f, r, WHEEL_AREA_WIDTH_CM, WHEEL_AREA_LENGTH_CM)
+            for f, r in zip(forward_body_cm, right_body_cm)
+        ])
 
-        wheel_zone = (
-                (forward_body_cm >= wheel_forward_min) &
-                (forward_body_cm <= wheel_forward_max) &
-                (right_body_cm >= wheel_right_min) &
-                (right_body_cm <= wheel_right_max)
-        )
+        # Check which points are in the box zone
+        in_box_zone = np.array([
+            is_point_in_robot_zone(f, r, BOX_AREA_WIDTH_CM, BOX_AREA_LENGTH_CM)
+            for f, r in zip(forward_body_cm, right_body_cm)
+        ])
 
-        # Check if any point is in the box danger zone (back)
-        box_forward_min = BOX_AREA_CENTER_OFFSET_CM - BOX_AREA_LENGTH_CM / 2.0
-        box_forward_max = BOX_AREA_CENTER_OFFSET_CM + BOX_AREA_LENGTH_CM / 2.0
-        box_right_min = -BOX_AREA_WIDTH_CM / 2.0
-        box_right_max = BOX_AREA_WIDTH_CM / 2.0
-
-        box_zone = (
-                (forward_body_cm >= box_forward_min) &
-                (forward_body_cm <= box_forward_max) &
-                (right_body_cm >= box_right_min) &
-                (right_body_cm <= box_right_max)
-        )
-
-        # Combined danger zone (for nearest point detection and flags)
-        danger_zone = wheel_zone | box_zone
+        # Combined danger zone
+        danger_zone = in_wheel_zone | in_box_zone
 
         # Find nearest point in either danger zone
         if np.any(danger_zone):
@@ -659,22 +648,19 @@ def detect_danger_zones(
             state.nearest_dx_body = float(right_body_cm[nearest_index])
             state.nearest_dy_body = float(forward_body_cm[nearest_index])
 
-            # Set danger flags for the wheel zone
-            if np.any(wheel_zone):
-                wheel_forward = forward_body_cm[wheel_zone]
-                wheel_right = right_body_cm[wheel_zone]
-                flags.front = bool(np.any(wheel_forward > 0))  # Front of wheel zone
-                flags.back = bool(np.any(wheel_forward < 0))  # Back of wheel zone
-                flags.center = bool(np.any(np.abs(wheel_right) <= 3.0))  # Center of wheel zone (3cm deadband)
-                flags.left = bool(np.any(wheel_right < -3.0))  # Left side
-                flags.right = bool(np.any(wheel_right > 3.0))  # Right side
+            # Set danger flags based on which zones are hit
+            if np.any(in_wheel_zone):
+                # Wheel zone is at the front - mark as front danger
+                flags.front = True
+                # Also check left/right/center within wheel zone
+                wheel_right = right_body_cm[in_wheel_zone]
+                flags.center = bool(np.any(np.abs(wheel_right) <= 3.0))  # 3cm deadband
+                flags.left = bool(np.any(wheel_right < -3.0))
+                flags.right = bool(np.any(wheel_right > 3.0))
 
-                # Also check the box zone for rear danger
-                if np.any(box_zone):
-                    box_forward = forward_body_cm[box_zone]
-                    # If danger is in the box area and behind the robot center, mark as back
-                    if np.any(box_forward < 0):
-                        flags.back = True
+            if np.any(in_box_zone):
+                # Box zone is at the back - mark as back danger
+                flags.back = True
 
             # Check if too close
             state.too_close = (
@@ -682,21 +668,9 @@ def detect_danger_zones(
                     and state.nearest_dy_body >= -float(settings.danger_rear_ignore_cm)
             )
 
-        # Legacy zone-based flags for compatibility (if no specific zone detection)
-        if not np.any(wheel_zone) and not np.any(box_zone):
-            # Fallback to simple distance-based detection
-            near = (forward_body_cm * forward_body_cm + right_body_cm * right_body_cm) <= float(
-                settings.danger_distance_cm * settings.danger_distance_cm)
-            if np.any(near):
-                forward_near = forward_body_cm[near]
-                right_near = right_body_cm[near]
-                flags.front = bool(np.any(forward_near > float(settings.danger_center_deadband_cm)))
-                flags.back = bool(np.any(forward_near < -float(settings.danger_center_deadband_cm)))
-                flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_cm)))
-                flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_cm)))
-                flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_cm)))
-
     else:
+        # Fallback when no robot pose is available - simple zone-based detection
+        zone_w = max(1, w // 3)
         zone_h = max(1, h // 3)
         flags.front = bool(np.any(ys < zone_h))
         flags.back = bool(np.any(ys >= zone_h * 2))
@@ -923,13 +897,11 @@ def find_small_goal(frame: np.ndarray, field_corners: Optional[FieldCorners], se
         tr = field_corners.topRight
         br = field_corners.bottomRight
 
-        # --- NYT: Begræns søgeområdet til midten af banen ---
         edge_height = br[1] - tr[1]
-        if edge_height <= 0: return None  # Avoid division by zero or negative height
+        if edge_height <= 0: return None
 
-        y_search_start = tr[1] + int(edge_height * 0.30)  # Start 30% nede
-        y_search_end = tr[1] + int(edge_height * 0.70)  # Slut 70% nede
-        # --- SLUT PÅ NYT ---
+        y_search_start = tr[1] + int(edge_height * 0.30)
+        y_search_end = tr[1] + int(edge_height * 0.70)
 
         search_width_px = 40
         x_center = int((tr[0] + br[0]) / 2)

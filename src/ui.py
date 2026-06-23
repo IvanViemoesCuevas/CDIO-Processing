@@ -9,9 +9,6 @@ from config import PERSPECTIVE_PADDING_PX
 from vision import find_danger_perspective_points, is_ball_in_danger_zone
 from typing import Optional
 
-ROBOT_LENGTH_PX = 170
-ROBOT_WIDTH_PX = 80
-
 from navigation import (
     corrected_robot_pose_values,
     normalize_angle_rad,
@@ -22,16 +19,6 @@ from navigation import (
     MARKER_PERSPECTIVE_RIGHT_GAIN,
     get_scales,
 )
-
-
-def draw_robot_footprint(frame: np.ndarray, x: float, y: float, heading_rad: float, length_px: float,
-                         width_px: float) -> None:
-    length = max(10.0, float(length_px))
-    width = max(10.0, float(width_px))
-    angle_deg = math.degrees(heading_rad)
-    rect = ((float(x), float(y)), (length, width), angle_deg)
-    box = cv.boxPoints(rect).astype(np.int32)
-    cv.polylines(frame, [box], True, (0, 255, 255), 2)
 
 
 def draw_danger_zones(
@@ -65,10 +52,10 @@ def draw_danger_zones(
     )
 
     # Robot dimensions in cm (matching vision.py)
-    WHEEL_AREA_WIDTH_CM = 21.0  # Width (left-right)
+    WHEEL_AREA_WIDTH_CM = 20.0  # Width (left-right)
     WHEEL_AREA_LENGTH_CM = 7.0  # Length (front-back)
     BOX_AREA_WIDTH_CM = 12.0  # Width (left-right)
-    BOX_AREA_LENGTH_CM = 45.0  # Length (front-back)
+    BOX_AREA_LENGTH_CM = 42.0  # Length (front-back)
 
     # Convert cm to pixels using the scale factors
     wheel_width_px = WHEEL_AREA_WIDTH_CM * scale_x
@@ -86,9 +73,7 @@ def draw_danger_zones(
     cy = corrected_y
 
     # --- Draw Wheel Danger Zone (Front - Green) ---
-    # The wheel zone is centered at the robot center, but extends more to the front
-    # Since the wheel is at the front, the center of the wheel zone IS the robot center
-    # (the wheel zone rectangle is centered on the robot center)
+    # The wheel zone is centered at the robot center
     wheel_corners_local = [
         (-wheel_length_px / 2, -wheel_width_px / 2),  # Front-left
         (wheel_length_px / 2, -wheel_width_px / 2),  # Front-right
@@ -396,7 +381,7 @@ def annotate(
         debug_lines.append(
             f"route_state={route_manager.state.upper()} queue_len={len(route_manager.queue)} visited={len(route_manager.visited_positions)}")
     if robot_pose is not None:
-        # Draw corrected drive center and heading
+        # Get corrected drive center and heading for debug info
         (
             robot_x,
             robot_y,
@@ -414,13 +399,11 @@ def annotate(
         )
         robot_point = (int(round(robot_x)), int(round(robot_y)))
 
-        # Draw robot footprint at corrected location and heading
-        draw_robot_footprint(out, robot_x, robot_y, robot_heading, ROBOT_LENGTH_PX, ROBOT_WIDTH_PX)
-
-        # Draw marker point and correction line
+        # Draw marker point (raw ArUco position)
         cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
         marker_point = (robot_pose.x, robot_pose.y)
 
+        # Draw arrow showing raw heading
         arrow_len = 45
         heading_x = math.cos(robot_pose.heading_rad)
         heading_y = math.sin(robot_pose.heading_rad)
@@ -428,11 +411,11 @@ def annotate(
         y2 = int(robot_pose.y + arrow_len * heading_y)
         cv.arrowedLine(out, (robot_pose.x, robot_pose.y), (x2, y2), (0, 255, 0), 2, tipLength=0.25)
 
+        # Draw line from marker to corrected pose
         cv.line(out, marker_point, robot_point, (255, 255, 0), 2)
         cv.circle(out, robot_point, 7, (255, 255, 0), -1)
 
-        # Draw the robot-local axes used for the correction.
-        # Blue = robot-local forward, red = robot-local right.
+        # Draw the robot-local axes for reference
         local_axis_len = 45
         local_forward_end = (
             int(robot_pose.x + local_axis_len * math.cos(robot_heading)),
@@ -491,7 +474,7 @@ def annotate(
             cv.line(out, (center_x, target_ball.y), (target_ball.x, target_ball.y), (255, 0, 255), 2)
             debug_lines.append(f"target=({target_ball.x},{target_ball.y}) center_x={center_x} error_x={error_x}")
 
-    # Draw danger zones
+    # Draw danger contours (red mask outlines)
     if danger_contours is not None:
         cv.drawContours(out, danger_contours, -1, (0, 0, 255), 2)
 
