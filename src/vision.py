@@ -577,14 +577,9 @@ def detect_danger_zones(
 
         dx_img: NDArray[np.float32] = np.asarray(xs, dtype=np.float32) - np.float32(robot_pose.x)
         dy_img: NDArray[np.float32] = np.asarray(ys, dtype=np.float32) - np.float32(robot_pose.y)
-        
+
         dx_cm = dx_img / scale_x
         dy_cm = dy_img / scale_y
-        dist2_cm: NDArray[np.float32] = dx_cm * dx_cm + dy_cm * dy_cm
-        nearest_index = int(np.argmin(dist2_cm))
-
-        state.nearest_distance_cm = float(np.sqrt(dist2_cm[nearest_index]))
-        state.nearest_point = (int(xs[nearest_index]), int(ys[nearest_index]))
 
         heading_x = math.cos(robot_pose.heading_rad)
         heading_y = math.sin(robot_pose.heading_rad)
@@ -600,21 +595,60 @@ def detect_danger_zones(
             dtype=np.float32,
         )
 
-        near = dist2_cm <= float(settings.danger_distance_cm * settings.danger_distance_cm)
-        if np.any(near):
-            forward_near = forward_body_cm[near]
-            right_near = right_body_cm[near]
-            flags.front = bool(np.any(forward_near > float(settings.danger_center_deadband_cm)))
-            flags.back = bool(np.any(forward_near < -float(settings.danger_center_deadband_cm)))
-            flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_cm)))
-            flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_cm)))
-            flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_cm)))
+        half_length_cm = float(settings.robot_length_cm) * 0.5
+        half_width_cm = float(settings.robot_width_cm) * 0.5
 
+        rear_limit_cm = -half_length_cm - float(settings.robot_danger_margin_cm)
+        front_limit_cm = (
+            half_length_cm
+            + float(settings.robot_danger_margin_cm)
+            + float(settings.robot_front_extra_margin_cm)
+        )
+        side_limit_cm = (
+            half_width_cm
+            + float(settings.robot_danger_margin_cm)
+            + float(settings.robot_side_extra_margin_cm)
+        )
+
+        # Distance to the expanded rectangular robot footprint.
+        # A value of 0 means the obstacle overlaps the safety rectangle.
+        outside_forward_cm = np.maximum(
+            np.maximum(rear_limit_cm - forward_body_cm, forward_body_cm - front_limit_cm),
+            0.0,
+        )
+        outside_side_cm = np.maximum(np.abs(right_body_cm) - side_limit_cm, 0.0)
+        rect_dist2_cm: NDArray[np.float32] = np.asarray(
+            outside_forward_cm * outside_forward_cm + outside_side_cm * outside_side_cm,
+            dtype=np.float32,
+        )
+
+        nearest_index = int(np.argmin(rect_dist2_cm))
+        state.nearest_distance_cm = float(np.sqrt(rect_dist2_cm[nearest_index]))
+        state.nearest_point = (int(xs[nearest_index]), int(ys[nearest_index]))
         state.nearest_dx_body = float(right_body_cm[nearest_index])
         state.nearest_dy_body = float(forward_body_cm[nearest_index])
+
+        # Anything inside or close to the expanded rectangle is considered relevant danger.
+        near_rect = rect_dist2_cm <= float(settings.danger_distance_cm * settings.danger_distance_cm)
+        if np.any(near_rect):
+            forward_near = forward_body_cm[near_rect]
+            right_near = right_body_cm[near_rect]
+
+            front_band = half_length_cm * 0.20
+            rear_band = half_length_cm * 0.20
+            side_deadband = max(2.0, half_width_cm * 0.35)
+
+            flags.front = bool(np.any(forward_near >= -front_band))
+            flags.back = bool(np.any(forward_near <= rear_band))
+            flags.center = bool(np.any(np.abs(right_near) <= side_deadband))
+            flags.left = bool(np.any(right_near < -side_deadband))
+            flags.right = bool(np.any(right_near > side_deadband))
+
+        # too_close now means the obstacle overlaps, or nearly overlaps, the robot's
+        # rectangular safety footprint, not just a circular radius around the marker.
         state.too_close = (
-                state.nearest_distance_cm <= float(settings.danger_too_close_cm)
-                and state.nearest_dy_body >= -float(settings.danger_rear_ignore_cm)
+            state.nearest_distance_cm <= float(settings.danger_too_close_cm)
+            and state.nearest_dy_body >= rear_limit_cm
         )
     else:
         zone_h = max(1, h // 3)

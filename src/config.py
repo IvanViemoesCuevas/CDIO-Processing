@@ -34,10 +34,17 @@ class Settings:
 
     # Danger detection
     min_obstacle_area: int = 400
-    danger_center_deadband_cm: float = 15.0
-    danger_distance_cm: float = 15.0
-    danger_too_close_cm: float = 10.0
-    danger_rear_ignore_cm: float = 10.0
+    danger_center_deadband_cm: float = 0.0
+    danger_distance_cm: float = 0.0
+    danger_too_close_cm: float = 0.0
+    danger_rear_ignore_cm: float = 0.0
+
+    # Robot footprint used for danger detection.
+    robot_length_cm: float = 43.0
+    robot_width_cm: float = 20.0
+    robot_danger_margin_cm: float = 1.0
+    robot_front_extra_margin_cm: float = 1.0
+    robot_side_extra_margin_cm: float = 1.0
 
     # Goal detection settings
     min_goal_gap_px: int = 50  # Minimum pixel height of a gap to be considered a goal
