@@ -9,6 +9,7 @@ import numpy as np
 from numpy.typing import NDArray
 import os
 from typing import Optional
+
 try:
     from ultralytics import YOLO
 except Exception:  # pragma: no cover - graceful fallback if ultralytics not available
@@ -24,12 +25,12 @@ YOLO_MODEL_PATH = "my_model.pt"
 # Lazily-loaded YOLO model instance
 _yolo_model = None
 
-#PERSPECTIVE_SRC_POINTS = np.float32([
+# PERSPECTIVE_SRC_POINTS = np.float32([
 #    [350, 130],   # top-left
 #    [1540, 150],  # top-right
 #    [1550, 1050],  # bottom-right
 #    [300, 1030],   # bottom-left
-#])
+# ])
 
 PERSPECTIVE_OUTPUT_SIZE: tuple[int, int] | None = None
 
@@ -42,14 +43,14 @@ PERSPECTIVE_SMOOTHING = 0.9
 _perspective_frame_counter = 0
 _smoothed_perspective_points: np.ndarray | None = None
 
-def correct_perspective(frame: np.ndarray) -> np.ndarray:
 
-    #detected_src = find_danger_perspective_points(frame)
+def correct_perspective(frame: np.ndarray) -> np.ndarray:
+    # detected_src = find_danger_perspective_points(frame)
     global _perspective_frame_counter, _smoothed_perspective_points
 
     should_update = (
-        _smoothed_perspective_points is None
-        or _perspective_frame_counter >= PERSPECTIVE_UPDATE_INTERVAL
+            _smoothed_perspective_points is None
+            or _perspective_frame_counter >= PERSPECTIVE_UPDATE_INTERVAL
     )
 
     if should_update:
@@ -63,8 +64,8 @@ def correct_perspective(frame: np.ndarray) -> np.ndarray:
             else:
                 alpha = float(PERSPECTIVE_SMOOTHING)
                 _smoothed_perspective_points = (
-                    alpha * _smoothed_perspective_points
-                    + (1.0 - alpha) * detected_src
+                        alpha * _smoothed_perspective_points
+                        + (1.0 - alpha) * detected_src
                 )
 
         _perspective_frame_counter = 0
@@ -100,6 +101,7 @@ def correct_perspective(frame: np.ndarray) -> np.ndarray:
     matrix = cv.getPerspectiveTransform(src, dst)
     return cv.warpPerspective(frame, matrix, (output_width, output_height))
 
+
 def _ensure_yolo_model():
     """Lazy-load the YOLO model. Returns None if ultralytics not installed."""
     global _yolo_model
@@ -125,10 +127,11 @@ def _ensure_yolo_model():
             _yolo_model = None
     return _yolo_model
 
+
 def build_ball_masks(
-    hsv_frame: np.ndarray,
-    orange_range: HSVRange = ORANGE_RANGE,
-    white_range: HSVRange = WHITE_RANGE,
+        hsv_frame: np.ndarray,
+        orange_range: HSVRange = ORANGE_RANGE,
+        white_range: HSVRange = WHITE_RANGE,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Build color masks for orange/white balls and a merged mask used for contour search."""
     orange_mask = cv.inRange(hsv_frame, orange_range.lower, orange_range.upper)
@@ -144,16 +147,17 @@ def build_ball_masks(
     mask = cv.bitwise_or(orange_mask, white_mask)
     return orange_mask, white_mask, mask
 
+
 def build_ball_mask(
-    hsv_frame: np.ndarray,
-    orange_range: HSVRange = ORANGE_RANGE,
-    white_range: HSVRange = WHITE_RANGE,
+        hsv_frame: np.ndarray,
+        orange_range: HSVRange = ORANGE_RANGE,
+        white_range: HSVRange = WHITE_RANGE,
 ) -> np.ndarray:
     """Convenience wrapper that returns only the merged orange+white mask."""
     orange, white, mask = build_ball_masks(hsv_frame, orange_range=orange_range, white_range=white_range)
-    #cv.imshow("orange-mask", orange)
-    #cv.imshow("white-mask", white)
-    #cv.imshow("combined-mask", orange)
+    # cv.imshow("orange-mask", orange)
+    # cv.imshow("white-mask", white)
+    # cv.imshow("combined-mask", orange)
     return mask
 
 
@@ -163,10 +167,10 @@ class BallDetectionTuner:
     WINDOW_NAME = "Ball Detection Tuner"
 
     def __init__(
-        self,
-        orange_range: HSVRange = ORANGE_RANGE,
-        white_range: HSVRange = WHITE_RANGE,
-        white_sat_split: float = 80.0,
+            self,
+            orange_range: HSVRange = ORANGE_RANGE,
+            white_range: HSVRange = WHITE_RANGE,
+            white_sat_split: float = 80.0,
     ) -> None:
         cv.namedWindow(self.WINDOW_NAME, cv.WINDOW_NORMAL)
 
@@ -232,6 +236,7 @@ class BallHandoffManager:
     Manages the state for ball handoff by tracking when the field is clear of balls.
     Ready for handoff when field is empty (0 balls detected for N consecutive frames).
     """
+
     def __init__(self, required_empty_frames: int = 1):
         """
         Initializes the manager.
@@ -281,12 +286,11 @@ class BallHandoffManager:
         self._has_seen_ball = False
 
 
-
 def make_ball_debug_view(
-    frame: np.ndarray,
-    orange_range: HSVRange = ORANGE_RANGE,
-    white_range: HSVRange = WHITE_RANGE,
-    white_sat_split: float = 80.0,
+        frame: np.ndarray,
+        orange_range: HSVRange = ORANGE_RANGE,
+        white_range: HSVRange = WHITE_RANGE,
+        white_sat_split: float = 80.0,
 ) -> np.ndarray:
     hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
     orange_mask, white_mask, combined_mask = build_ball_masks(
@@ -334,11 +338,11 @@ def make_ball_debug_view(
 
 
 def detect_balls(
-    frame: np.ndarray,
-    settings: Settings,
-    orange_range: HSVRange = ORANGE_RANGE,
-    white_range: HSVRange = WHITE_RANGE,
-    white_sat_split: Optional[float] = None,
+        frame: np.ndarray,
+        settings: Settings,
+        orange_range: HSVRange = ORANGE_RANGE,
+        white_range: HSVRange = WHITE_RANGE,
+        white_sat_split: Optional[float] = None,
 ) -> list[BallDetection]:
     """Detect candidate ping-pong balls using a YOLO model and convert detections
     into the project's BallDetection dataclass so the navigation code can remain
@@ -441,7 +445,7 @@ def detect_balls(
             continue
         x = int(x_float)
         y = int(y_float)
-        sample = hsv_frame[max(0, y-1): y+2, max(0, x-1): x+2]
+        sample = hsv_frame[max(0, y - 1): y + 2, max(0, x - 1): x + 2]
         if sample.size == 0:
             continue
         sat_mean = float(sample[:, :, 1].mean())
@@ -480,9 +484,9 @@ def choose_target_ball(balls: list[BallDetection], robot_pose: Optional[RobotPos
 
 
 def match_candidate_target(
-    candidate_target: Optional[BallDetection],
-    balls: list[BallDetection],
-    max_match_distance_px: float = 90.0,
+        candidate_target: Optional[BallDetection],
+        balls: list[BallDetection],
+        max_match_distance_px: float = 90.0,
 ) -> Optional[BallDetection]:
     # If no candidate/balls return none
     if candidate_target is None or not balls:
@@ -531,6 +535,7 @@ def detect_robot_pose(frame: np.ndarray, settings: Settings) -> Optional[RobotPo
 
     return RobotPose(x=cx, y=cy, heading_rad=heading, confidence=-1)
 
+
 def build_danger_mask(frame: np.ndarray) -> np.ndarray:
     hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
     red1 = cv.inRange(hsv_frame, RED_RANGE_1.lower, RED_RANGE_1.upper)
@@ -541,10 +546,11 @@ def build_danger_mask(frame: np.ndarray) -> np.ndarray:
     mask = cv.morphologyEx(mask, cv.MORPH_CLOSE, kernel)
     return mask
 
+
 def detect_danger_zones(
-    frame: np.ndarray,
-    settings: Settings,
-    robot_pose: Optional[RobotPose],
+        frame: np.ndarray,
+        settings: Settings,
+        robot_pose: Optional[RobotPose],
 ) -> tuple[DangerFlags, DangerState, np.ndarray, list[np.ndarray]]:
     h, w = frame.shape[:2]
     raw_mask = build_danger_mask(frame)
@@ -575,22 +581,33 @@ def detect_danger_zones(
         scale_x = width / FIELD_WIDTH_CM
         scale_y = height / FIELD_HEIGHT_CM
 
+        # Robot dimensions in cm
+        # Wheel area: 20 cm wide (left-right) x 7 cm long (front-back)
+        # Box area: 12 cm wide (left-right) x 42 cm long (front-back)
+        WHEEL_AREA_WIDTH_CM = 20.0
+        WHEEL_AREA_LENGTH_CM = 7.0
+        BOX_AREA_WIDTH_CM = 12.0
+        BOX_AREA_LENGTH_CM = 42.0
+
+        # Robot center offset: wheel area is at the front, box area is at the back
+        # Assuming robot center is at the middle of the robot
+        WHEEL_AREA_CENTER_OFFSET_CM = 15.0  # Wheel area center is 15 cm forward of robot center
+        BOX_AREA_CENTER_OFFSET_CM = -10.0  # Box area center is 10 cm backward of robot center
+
+        # Convert danger points to robot-local coordinates
         dx_img: NDArray[np.float32] = np.asarray(xs, dtype=np.float32) - np.float32(robot_pose.x)
         dy_img: NDArray[np.float32] = np.asarray(ys, dtype=np.float32) - np.float32(robot_pose.y)
-        
+
         dx_cm = dx_img / scale_x
         dy_cm = dy_img / scale_y
-        dist2_cm: NDArray[np.float32] = dx_cm * dx_cm + dy_cm * dy_cm
-        nearest_index = int(np.argmin(dist2_cm))
 
-        state.nearest_distance_cm = float(np.sqrt(dist2_cm[nearest_index]))
-        state.nearest_point = (int(xs[nearest_index]), int(ys[nearest_index]))
-
+        # Robot heading vectors
         heading_x = math.cos(robot_pose.heading_rad)
         heading_y = math.sin(robot_pose.heading_rad)
         right_x = -heading_y
         right_y = heading_x
 
+        # Transform to robot-local coordinates
         forward_body_cm: NDArray[np.float32] = np.asarray(
             dx_cm * np.float32(heading_x) + dy_cm * np.float32(heading_y),
             dtype=np.float32,
@@ -600,22 +617,85 @@ def detect_danger_zones(
             dtype=np.float32,
         )
 
-        near = dist2_cm <= float(settings.danger_distance_cm * settings.danger_distance_cm)
-        if np.any(near):
-            forward_near = forward_body_cm[near]
-            right_near = right_body_cm[near]
-            flags.front = bool(np.any(forward_near > float(settings.danger_center_deadband_cm)))
-            flags.back = bool(np.any(forward_near < -float(settings.danger_center_deadband_cm)))
-            flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_cm)))
-            flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_cm)))
-            flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_cm)))
+        # Check if any point is in the wheel danger zone (front)
+        wheel_forward_min = WHEEL_AREA_CENTER_OFFSET_CM - WHEEL_AREA_LENGTH_CM / 2.0
+        wheel_forward_max = WHEEL_AREA_CENTER_OFFSET_CM + WHEEL_AREA_LENGTH_CM / 2.0
+        wheel_right_min = -WHEEL_AREA_WIDTH_CM / 2.0
+        wheel_right_max = WHEEL_AREA_WIDTH_CM / 2.0
 
-        state.nearest_dx_body = float(right_body_cm[nearest_index])
-        state.nearest_dy_body = float(forward_body_cm[nearest_index])
-        state.too_close = (
-                state.nearest_distance_cm <= float(settings.danger_too_close_cm)
-                and state.nearest_dy_body >= -float(settings.danger_rear_ignore_cm)
+        wheel_zone = (
+                (forward_body_cm >= wheel_forward_min) &
+                (forward_body_cm <= wheel_forward_max) &
+                (right_body_cm >= wheel_right_min) &
+                (right_body_cm <= wheel_right_max)
         )
+
+        # Check if any point is in the box danger zone (back)
+        box_forward_min = BOX_AREA_CENTER_OFFSET_CM - BOX_AREA_LENGTH_CM / 2.0
+        box_forward_max = BOX_AREA_CENTER_OFFSET_CM + BOX_AREA_LENGTH_CM / 2.0
+        box_right_min = -BOX_AREA_WIDTH_CM / 2.0
+        box_right_max = BOX_AREA_WIDTH_CM / 2.0
+
+        box_zone = (
+                (forward_body_cm >= box_forward_min) &
+                (forward_body_cm <= box_forward_max) &
+                (right_body_cm >= box_right_min) &
+                (right_body_cm <= box_right_max)
+        )
+
+        # Combined danger zone (for nearest point detection and flags)
+        danger_zone = wheel_zone | box_zone
+
+        # Find nearest point in either danger zone
+        if np.any(danger_zone):
+            # Calculate squared distance for all points in danger zones
+            distances_sq = forward_body_cm * forward_body_cm + right_body_cm * right_body_cm
+            # Only consider points in the danger zones
+            distances_sq[~danger_zone] = np.inf
+            nearest_index = int(np.argmin(distances_sq))
+
+            state.nearest_distance_cm = float(np.sqrt(distances_sq[nearest_index]))
+            state.nearest_point = (int(xs[nearest_index]), int(ys[nearest_index]))
+            state.nearest_dx_body = float(right_body_cm[nearest_index])
+            state.nearest_dy_body = float(forward_body_cm[nearest_index])
+
+            # Set danger flags for the wheel zone
+            if np.any(wheel_zone):
+                wheel_forward = forward_body_cm[wheel_zone]
+                wheel_right = right_body_cm[wheel_zone]
+                flags.front = bool(np.any(wheel_forward > 0))  # Front of wheel zone
+                flags.back = bool(np.any(wheel_forward < 0))  # Back of wheel zone
+                flags.center = bool(np.any(np.abs(wheel_right) <= 3.0))  # Center of wheel zone (3cm deadband)
+                flags.left = bool(np.any(wheel_right < -3.0))  # Left side
+                flags.right = bool(np.any(wheel_right > 3.0))  # Right side
+
+                # Also check the box zone for rear danger
+                if np.any(box_zone):
+                    box_forward = forward_body_cm[box_zone]
+                    # If danger is in the box area and behind the robot center, mark as back
+                    if np.any(box_forward < 0):
+                        flags.back = True
+
+            # Check if too close
+            state.too_close = (
+                    state.nearest_distance_cm <= float(settings.danger_too_close_cm)
+                    and state.nearest_dy_body >= -float(settings.danger_rear_ignore_cm)
+            )
+
+        # Legacy zone-based flags for compatibility (if no specific zone detection)
+        if not np.any(wheel_zone) and not np.any(box_zone):
+            # Fallback to simple distance-based detection
+            near = (forward_body_cm * forward_body_cm + right_body_cm * right_body_cm) <= float(
+                settings.danger_distance_cm * settings.danger_distance_cm)
+            if np.any(near):
+                forward_near = forward_body_cm[near]
+                right_near = right_body_cm[near]
+                flags.front = bool(np.any(forward_near > float(settings.danger_center_deadband_cm)))
+                flags.back = bool(np.any(forward_near < -float(settings.danger_center_deadband_cm)))
+                flags.center = bool(np.any(np.abs(right_near) <= float(settings.danger_center_deadband_cm)))
+                flags.left = bool(np.any(right_near < -float(settings.danger_center_deadband_cm)))
+                flags.right = bool(np.any(right_near > float(settings.danger_center_deadband_cm)))
+
     else:
         zone_h = max(1, h // 3)
         flags.front = bool(np.any(ys < zone_h))
@@ -626,18 +706,20 @@ def detect_danger_zones(
 
     return flags, state, filtered_mask, kept_contours
 
+
 def is_ball_in_danger_zone(ball: BallDetection, danger_contours: list[np.ndarray], scale_x: float) -> bool:
     if not danger_contours:
         return False
-    
+
     min_dist_cm = float("inf")
     for contour in danger_contours:
         dist_px = cv.pointPolygonTest(contour, (float(ball.x), float(ball.y)), measureDist=True)
         dist_cm = abs(dist_px) / scale_x
         if dist_cm < min_dist_cm:
             min_dist_cm = dist_cm
-            
+
     return min_dist_cm <= 5.0
+
 
 def find_danger_perspective_points(frame: np.ndarray) -> np.ndarray | None:
     mask = build_danger_mask(frame)
@@ -701,8 +783,8 @@ def find_danger_perspective_points(frame: np.ndarray) -> np.ndarray | None:
     right_m, right_b = fit_x_line(right)
 
     def intersect(h_line, v_line):
-        mh, bh = h_line      # y = mh*x + bh
-        mv, bv = v_line      # x = mv*y + bv
+        mh, bh = h_line  # y = mh*x + bh
+        mv, bv = v_line  # x = mv*y + bv
         x = (mv * bh + bv) / (1 - mv * mh)
         y = mh * x + bh
         return [x, y]
@@ -715,6 +797,7 @@ def find_danger_perspective_points(frame: np.ndarray) -> np.ndarray | None:
     ])
 
     return order_perspective_points(points)
+
 
 def order_perspective_points(points: np.ndarray) -> np.ndarray:
     pts = np.asarray(points, dtype=np.float32).reshape(4, 2)
@@ -785,13 +868,13 @@ def detect_field_corners(frame: np.ndarray, settings: Settings) -> Optional[Fiel
     # We assume the field is roughly centered
 
     # Left vertical
-    left_line = min(vertical_lines, key=lambda l: (l[0] + l[2])/2)
+    left_line = min(vertical_lines, key=lambda l: (l[0] + l[2]) / 2)
     # Right vertical
-    right_line = max(vertical_lines, key=lambda l: (l[0] + l[2])/2)
+    right_line = max(vertical_lines, key=lambda l: (l[0] + l[2]) / 2)
     # Top horizontal
-    top_line = min(horizontal_lines, key=lambda l: (l[1] + l[3])/2)
+    top_line = min(horizontal_lines, key=lambda l: (l[1] + l[3]) / 2)
     # Bottom horizontal
-    bottom_line = max(horizontal_lines, key=lambda l: (l[1] + l[3])/2)
+    bottom_line = max(horizontal_lines, key=lambda l: (l[1] + l[3]) / 2)
 
     def get_intersection(line1, line2):
         """Calculates intersection of two line segments given as (x1, y1, x2, y2)."""
@@ -822,7 +905,9 @@ def detect_field_corners(frame: np.ndarray, settings: Settings) -> Optional[Fiel
         bottomRight=bottom_right,
     )
 
-def find_small_goal(frame: np.ndarray, field_corners: Optional[FieldCorners], settings: Settings) -> Optional[GoalDetection]:
+
+def find_small_goal(frame: np.ndarray, field_corners: Optional[FieldCorners], settings: Settings) -> Optional[
+    GoalDetection]:
     """
     Scans the right vertical edge of the detected field to find the small goal.
     """
@@ -840,10 +925,10 @@ def find_small_goal(frame: np.ndarray, field_corners: Optional[FieldCorners], se
 
         # --- NYT: Begræns søgeområdet til midten af banen ---
         edge_height = br[1] - tr[1]
-        if edge_height <= 0: return None # Avoid division by zero or negative height
+        if edge_height <= 0: return None  # Avoid division by zero or negative height
 
-        y_search_start = tr[1] + int(edge_height * 0.30) # Start 30% nede
-        y_search_end = tr[1] + int(edge_height * 0.70)   # Slut 70% nede
+        y_search_start = tr[1] + int(edge_height * 0.30)  # Start 30% nede
+        y_search_end = tr[1] + int(edge_height * 0.70)  # Slut 70% nede
         # --- SLUT PÅ NYT ---
 
         search_width_px = 40
