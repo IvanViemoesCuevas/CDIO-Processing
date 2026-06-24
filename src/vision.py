@@ -668,17 +668,35 @@ def is_ball_in_danger_zone(ball: BallDetection, danger_contours: list[np.ndarray
     scale = scale_x
     if scale_y is not None:
         scale = (scale_x + scale_y) / 2.0
+        
+    # Estimate frame dimensions from scales and field constants
+    frame_width = scale_x * FIELD_WIDTH_CM + 2 * PERSPECTIVE_PADDING_PX
+    scale_y_val = scale_y if scale_y is not None else scale_x
+    frame_height = scale_y_val * FIELD_HEIGHT_CM + 2 * PERSPECTIVE_PADDING_PX
     
     min_dist_cm = float("inf")
     for contour in danger_contours:
+        # Check if the contour is a large boundary (field wall)
+        x_px, y_px, w_px, h_px = cv.boundingRect(contour)
+        is_boundary = (w_px >= 0.8 * frame_width) or (h_px >= 0.8 * frame_height)
+        
         # positive inside, negative outside, 0 on edge
         dist_px = cv.pointPolygonTest(contour, (float(ball.x), float(ball.y)), measureDist=True)
-        if dist_px >= 0:
-            dist_cm = 0.0
-        else:
+        
+        if is_boundary:
+            # For a boundary contour, being inside the contour is normal (playable field).
+            # The actual distance to the boundary line is what matters.
             raw_dist_cm = abs(dist_px) / scale
             ball_radius_cm = ball.radius / scale
             dist_cm = max(0.0, raw_dist_cm - ball_radius_cm)
+        else:
+            # For middle solid obstacles, being inside means the ball is in/under the obstacle.
+            if dist_px >= 0:
+                dist_cm = 0.0
+            else:
+                raw_dist_cm = abs(dist_px) / scale
+                ball_radius_cm = ball.radius / scale
+                dist_cm = max(0.0, raw_dist_cm - ball_radius_cm)
             
         if dist_cm < min_dist_cm:
             min_dist_cm = dist_cm
