@@ -32,7 +32,9 @@ def segment_intersects_box(xa, ya, xb, yb, box, margin=8.0):
         return True
     return False
 
-def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, frame_height: int, scale_x: float, scale_y: float) -> list[tuple[float, float, float, float]]:
+
+def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, frame_height: int, scale_x: float,
+                         scale_y: float) -> list[tuple[float, float, float, float]]:
     obstacles = []
     for c in danger_contours:
         x_px, y_px, w_px, h_px = cv.boundingRect(c)
@@ -112,16 +114,16 @@ class RouteManager:
         self.re_eval_danger_mask = None
 
     def update(
-        self,
-        current_time: float,
-        balls: List[BallDetection],
-        robot_pose: Optional[RobotPose],
-        danger_mask: Optional[np.ndarray],
-        scale_x: float,
-        scale_y: float,
-        settings,
-        current_danger_contours: list = [],
-        small_goal: Optional[GoalDetection] = None,
+            self,
+            current_time: float,
+            balls: List[BallDetection],
+            robot_pose: Optional[RobotPose],
+            danger_mask: Optional[np.ndarray],
+            scale_x: float,
+            scale_y: float,
+            settings,
+            current_danger_contours: list = [],
+            small_goal: Optional[GoalDetection] = None,
     ) -> Tuple[Optional[BallDetection], str, str]:
         """
         Updates the route planning state machine.
@@ -216,7 +218,8 @@ class RouteManager:
                     
                     # Check danger zone using the averaged position
                     if is_ball_in_danger_zone(temp_ball, contours_to_use, scale_x):
-                        print(f"[RouteManager] Filtering out danger zone ball at ({temp_ball.x}, {temp_ball.y}) color={temp_ball.color_name}")
+                        print(
+                            f"[RouteManager] Filtering out danger zone ball at ({temp_ball.x}, {temp_ball.y}) color={temp_ball.color_name}")
                         continue
                     
                     planned_balls.append(temp_ball)
@@ -271,22 +274,24 @@ class RouteManager:
                     f"[RouteManager] obstacle[{obs_idx}] "
                     f"x=({obs[0]:.1f},{obs[2]:.1f}) y=({obs[1]:.1f},{obs[3]:.1f}) cm"
                 )
-            
+
             final_queue = []
             curr_x, curr_y = start_x, start_y
             
             for target in route:
                 target_x_cm = (target.x - PERSPECTIVE_PADDING_PX) / scale_x
                 target_y_cm = (target.y - PERSPECTIVE_PADDING_PX) / scale_y
-                
-                obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
+
+                obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles,
+                                                        margin=settings.obstacle_avoidance_margin_cm)
                 if obs is not None:
                     print(
                         "[RouteManager] Planned segment crosses obstacle: "
                         f"from=({curr_x:.1f},{curr_y:.1f}) to=({target_x_cm:.1f},{target_y_cm:.1f}) "
                         f"obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
                     )
-                    wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
+                    wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs,
+                                              margin=settings.obstacle_avoidance_margin_cm)
                     if wp is not None:
                         wp_x, wp_y = wp
                         wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
@@ -337,14 +342,11 @@ class RouteManager:
                     contours_to_use = self.cumulative_contours if self.cumulative_contours else current_danger_contours
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
 
-                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
+                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles,
+                                                            margin=settings.obstacle_avoidance_margin_cm)
                     if obs is not None:
-                        print(
-                            "[RouteManager] Handoff segment crosses obstacle: "
-                            f"from=({r_x_cm:.1f},{r_y_cm:.1f}) to=({align_x_cm:.1f},{align_y_cm:.1f}) "
-                            f"obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
-                        )
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
+                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs,
+                                                  margin=settings.obstacle_avoidance_margin_cm)
                         if wp is not None:
                             wp_x, wp_y = wp
                             waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
@@ -417,16 +419,11 @@ class RouteManager:
                     frame_width = danger_mask.shape[1] if danger_mask is not None else 1280
                     frame_height = danger_mask.shape[0] if danger_mask is not None else 960
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
-                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
+                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles,
+                                                            margin=settings.obstacle_avoidance_margin_cm)
                     if obs is not None:
-                        """
-                        print(
-                            "[RouteManager] Dynamic segment crosses obstacle: "
-                            f"from=({r_x_cm:.1f},{r_y_cm:.1f}) to=({t_x_cm:.1f},{t_y_cm:.1f}) "
-                            f"target={target.color_name} obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
-                        )
-                        """
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
+                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs,
+                                                  margin=settings.obstacle_avoidance_margin_cm)
                         if wp is not None:
                             wp_x, wp_y = wp
                             # Only insert if the waypoint is not already extremely close to the robot
@@ -451,9 +448,10 @@ class RouteManager:
                                 target = wp_ball
                                 t_x_cm, t_y_cm = wp_x, wp_y
                                 dist_to_target = math.hypot(t_x_cm - r_x_cm, t_y_cm - r_y_cm)
-                            #else:
-                                #print(f"[RouteManager] Skip dynamic insertion: generated waypoint at ({wp_x:.1f}, {wp_y:.1f}) is too close to robot ({r_x_cm:.1f}, {r_y_cm:.1f}).")
-                
+                            else:
+                                print(
+                                    f"[RouteManager] Skip dynamic insertion: generated waypoint at ({wp_x:.1f}, {wp_y:.1f}) is too close to robot ({r_x_cm:.1f}, {r_y_cm:.1f}).")
+
                 if target.color_name != "waypoint" and dist_to_target < 30.0:
                     # Is target currently matched by any detection?
                     target_matched = (0 in matched_queued_indices)
@@ -571,7 +569,8 @@ class RouteManager:
                         )
                         
                         if is_ball_in_danger_zone(temp_ball, contours_to_use, scale_x):
-                            print(f"[RouteManager] Re-eval filtering out danger zone ball at ({temp_ball.x}, {temp_ball.y})")
+                            print(
+                                f"[RouteManager] Re-eval filtering out danger zone ball at ({temp_ball.x}, {temp_ball.y})")
                             continue
                         
                         collectible_count += 1
