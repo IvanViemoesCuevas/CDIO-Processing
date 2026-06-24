@@ -660,14 +660,26 @@ def detect_danger_zones(
 
     return flags, state, filtered_mask, kept_contours
 
-def is_ball_in_danger_zone(ball: BallDetection, danger_contours: list[np.ndarray], scale_x: float) -> bool:
+def is_ball_in_danger_zone(ball: BallDetection, danger_contours: list[np.ndarray], scale_x: float, scale_y: float = None) -> bool:
     if not danger_contours:
         return False
     
+    # Use average scale for non-square pixels
+    scale = scale_x
+    if scale_y is not None:
+        scale = (scale_x + scale_y) / 2.0
+    
     min_dist_cm = float("inf")
     for contour in danger_contours:
+        # positive inside, negative outside, 0 on edge
         dist_px = cv.pointPolygonTest(contour, (float(ball.x), float(ball.y)), measureDist=True)
-        dist_cm = abs(dist_px) / scale_x
+        if dist_px >= 0:
+            dist_cm = 0.0
+        else:
+            raw_dist_cm = abs(dist_px) / scale
+            ball_radius_cm = ball.radius / scale
+            dist_cm = max(0.0, raw_dist_cm - ball_radius_cm)
+            
         if dist_cm < min_dist_cm:
             min_dist_cm = dist_cm
             

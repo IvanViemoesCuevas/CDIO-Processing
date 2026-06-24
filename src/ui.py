@@ -94,7 +94,7 @@ def annotate(
     for b in balls:
         is_danger = False
         if danger_contours is not None:
-            is_danger = is_ball_in_danger_zone(b, danger_contours, scale_x)
+            is_danger = is_ball_in_danger_zone(b, danger_contours, scale_x, scale_y)
 
         if is_danger:
             ball_outline_color = (0, 0, 255)  # Red for danger

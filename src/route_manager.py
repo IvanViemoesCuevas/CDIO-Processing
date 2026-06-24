@@ -238,7 +238,7 @@ class RouteManager:
                     )
                     
                     # Check danger zone using the averaged position
-                    if is_ball_in_danger_zone(temp_ball, contours_to_use, scale_x):
+                    if is_ball_in_danger_zone(temp_ball, contours_to_use, scale_x, scale_y):
                         print(f"[RouteManager] Filtering out danger zone ball at ({temp_ball.x}, {temp_ball.y}) color={temp_ball.color_name}")
                         continue
                     
@@ -401,7 +401,7 @@ class RouteManager:
                 db_x_cm = (db.x - PERSPECTIVE_PADDING_PX) / scale_x
                 db_y_cm = (db.y - PERSPECTIVE_PADDING_PX) / scale_y
                 
-                if is_ball_in_danger_zone(db, contours_to_use, scale_x):
+                if is_ball_in_danger_zone(db, contours_to_use, scale_x, scale_y):
                     continue
                 
                 # Check if it matches a queued ball (non-visited)
@@ -594,7 +594,7 @@ class RouteManager:
                             circularity=1.0
                         )
                         
-                        if is_ball_in_danger_zone(temp_ball, contours_to_use, scale_x):
+                        if is_ball_in_danger_zone(temp_ball, contours_to_use, scale_x, scale_y):
                             print(f"[RouteManager] Re-eval filtering out danger zone ball at ({temp_ball.x}, {temp_ball.y})")
                             continue
                         
