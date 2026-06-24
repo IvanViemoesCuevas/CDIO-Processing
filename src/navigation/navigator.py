@@ -1,115 +1,26 @@
 import math
 from dataclasses import replace
 
-from config import *
-
+from config import (
+    CMD_LEFT,
+    CMD_RIGHT,
+    CMD_FORWARD,
+    CMD_BACKWARD,
+    CMD_STOP,
+    CMD_SWITCH,
+    Settings,
+)
 from models import (
     NavigationContext,
     NavigationResult,
     NavigationState,
     BallDetection,
 )
-
-# Calibration offsets between the elevated ArUco marker and the robot's real ground pose.
-# Since the marker works when placed on the ground, tune the forward/right pixel offsets first.
-# Only tune heading if the marker is physically rotated relative to the robot's forward direction.
-
-MARKER_HEADING_OFFSET_DEG = 0.0
-
-# Physical mount offset from the ArUco marker to the robot's real drive/rotation center.
-# These are robot-local offsets and DO rotate when the robot turns:
-#   forward_px = along robot forward
-#   right_px   = along robot right
-MARKER_TO_DRIVE_CENTER_FORWARD_PX = 0.0
-MARKER_TO_DRIVE_CENTER_RIGHT_PX = 0.0
-
-# Perspective correction caused by the marker being elevated above the ground.
-# These are IMAGE-SPACE corrections and do NOT rotate with the robot.
-# Tune these so the elevated marker projects down to the ground point under the marker.
-# Positive X gain moves the correction more right when the marker is right of image center.
-# Positive Y gain moves the correction more down when the marker is below image center.
-MARKER_PERSPECTIVE_X_GAIN = -90.0
-MARKER_PERSPECTIVE_Y_GAIN = -60.0
-
-# Backwards-compatible aliases used by ui.py debug text.
-MARKER_PERSPECTIVE_RIGHT_GAIN = MARKER_PERSPECTIVE_X_GAIN
-MARKER_PERSPECTIVE_FORWARD_GAIN = MARKER_PERSPECTIVE_Y_GAIN
-
-
-def normalize_angle_rad(angle: float) -> float:
-    return math.atan2(math.sin(angle), math.cos(angle))
-
-
-def corrected_robot_pose_values(robot_pose, frame_width: int | None = None, frame_height: int | None = None):
-    corrected_heading = normalize_angle_rad(
-        robot_pose.heading_rad + math.radians(MARKER_HEADING_OFFSET_DEG)
-    )
-
-    # Robot-local unit vectors in image coordinates.
-    # These rotate with the ArUco/robot heading.
-    forward_x = math.cos(corrected_heading)
-    forward_y = math.sin(corrected_heading)
-    right_x = math.cos(corrected_heading + math.pi / 2.0)
-    right_y = math.sin(corrected_heading + math.pi / 2.0)
-
-    normalized_x = 0.0
-    normalized_y = 0.0
-
-    if frame_width is not None and frame_width > 0:
-        image_center_x = frame_width / 2.0
-        normalized_x = (float(robot_pose.x) - image_center_x) / image_center_x
-
-    if frame_height is not None and frame_height > 0:
-        image_center_y = frame_height / 2.0
-        normalized_y = (float(robot_pose.y) - image_center_y) / image_center_y
-
-    # 1) Perspective correction: image-space offset caused by marker height.
-    # This should NOT rotate with the robot. It only depends on where the elevated marker
-    # appears in the camera image.
-    perspective_offset_x = MARKER_PERSPECTIVE_X_GAIN * normalized_x
-    perspective_offset_y = MARKER_PERSPECTIVE_Y_GAIN * normalized_y
-
-    # 2) Physical mount correction: robot-local offset from marker to drive center.
-    # This DOES rotate with the robot.
-    mount_offset_x = (
-        MARKER_TO_DRIVE_CENTER_FORWARD_PX * forward_x
-        + MARKER_TO_DRIVE_CENTER_RIGHT_PX * right_x
-    )
-    mount_offset_y = (
-        MARKER_TO_DRIVE_CENTER_FORWARD_PX * forward_y
-        + MARKER_TO_DRIVE_CENTER_RIGHT_PX * right_y
-    )
-
-    # Final correction in image coordinates.
-    offset_x = perspective_offset_x + mount_offset_x
-    offset_y = perspective_offset_y + mount_offset_y
-
-    corrected_x = float(robot_pose.x) + offset_x
-    corrected_y = float(robot_pose.y) + offset_y
-
-    # For the UI: express the final image-space correction back in the robot-local axes.
-    # This is the part that will appear to "switch" when the robot turns 90 degrees.
-    used_forward_px = offset_x * forward_x + offset_y * forward_y
-    used_right_px = offset_x * right_x + offset_y * right_y
-
-    return (
-        corrected_x,
-        corrected_y,
-        corrected_heading,
-        used_forward_px,
-        used_right_px,
-        offset_x,
-        offset_y,
-        normalized_x,
-        normalized_y,
-    )
-
-def get_scales(frame_width: int, frame_height: int) -> tuple[float, float]:
-    width = frame_width - 2 * PERSPECTIVE_PADDING_PX
-    height = frame_height - 2 * PERSPECTIVE_PADDING_PX
-    scale_x = width / FIELD_WIDTH_CM
-    scale_y = height / FIELD_HEIGHT_CM
-    return scale_x, scale_y
+from utils.geometry import (
+    corrected_robot_pose_values,
+    normalize_angle_rad,
+    get_scales,
+)
 
 
 def opposite_turn(command: str) -> str:

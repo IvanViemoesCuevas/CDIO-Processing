@@ -1,26 +1,10 @@
-# Only dataclasses
 from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
+from .detections import BallDetection, GoalDetection
+from .robot import RobotPose
 
 if TYPE_CHECKING:
     from vision import BallHandoffManager
-
-@dataclass
-class BallDetection:
-    x: int
-    y: int
-    radius: float
-    color_name: str
-    confidence: float
-    circularity: float = 0.0
-
-
-@dataclass
-class RobotPose:
-    x: int
-    y: int
-    heading_rad: float
-    confidence: float
 
 
 @dataclass
@@ -53,7 +37,7 @@ class NavigationContext:
     balls_count: int
     candidate_target_visible: bool
     handoff_manager: Optional["BallHandoffManager"] = None
-    small_goal: Optional["GoalDetection"] = None
+    small_goal: Optional[GoalDetection] = None
 
 
 @dataclass
@@ -74,25 +58,3 @@ class NavigationState:
 class NavigationResult:
     command: str
     reason: str
-
-
-@dataclass
-class GoalDetection:
-    """Represents a detected goal with position and size information."""
-    x: int
-    y: int
-    size_category: str
-    confidence: float = 1.0
-    alignment_point_x: Optional[int] = None
-    alignment_point_y: Optional[int] = None
-    delivery_point_x: Optional[int] = None
-    delivery_point_y: Optional[int] = None
-
-
-@dataclass
-class FieldCorners:
-    """Represents the four corners of the golf field/court."""
-    topLeft: tuple[int, int]
-    topRight: tuple[int, int]
-    bottomLeft: tuple[int, int]
-    bottomRight: tuple[int, int]

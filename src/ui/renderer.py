@@ -1,28 +1,34 @@
-# Drawing and debug windows.
 import math
-
 import numpy as np
 import cv2 as cv
-
-from models import *
-from config import Settings
-from config import PERSPECTIVE_PADDING_PX,  Settings
-from vision import find_danger_perspective_points, is_ball_in_danger_zone
 from typing import Optional
 
-ROBOT_LENGTH_CM = Settings.robot_length_cm
-ROBOT_WIDTH_CM = Settings.robot_width_cm
-
-from navigation import (
+from models import (
+    BallDetection,
+    RobotPose,
+    DangerFlags,
+    DangerState,
+    GoalDetection,
+    FieldCorners,
+)
+from config import Settings, PERSPECTIVE_PADDING_PX
+from utils.geometry import (
     corrected_robot_pose_values,
     normalize_angle_rad,
+    get_scales,
+)
+from navigation import (
     MARKER_HEADING_OFFSET_DEG,
     MARKER_TO_DRIVE_CENTER_FORWARD_PX,
     MARKER_TO_DRIVE_CENTER_RIGHT_PX,
     MARKER_PERSPECTIVE_FORWARD_GAIN,
     MARKER_PERSPECTIVE_RIGHT_GAIN,
-    get_scales,
 )
+from vision import find_danger_perspective_points, is_ball_in_danger_zone
+
+ROBOT_LENGTH_CM = Settings.robot_length_cm
+ROBOT_WIDTH_CM = Settings.robot_width_cm
+
 
 def draw_robot_footprint(frame: np.ndarray, x: float, y: float, heading_rad: float, length_cm: float, width_cm: float) -> None:
     length_cm = max(1.0, float(length_cm))
@@ -55,6 +61,7 @@ def draw_robot_footprint(frame: np.ndarray, x: float, y: float, heading_rad: flo
 
     box = np.asarray(corners_px, dtype=np.int32)
     cv.polylines(frame, [box], True, (0, 255, 255), 2)
+
 
 def annotate(
         frame: np.ndarray,
@@ -133,7 +140,6 @@ def annotate(
             for i in range(len(pts) - 1):
                 cv.line(out, pts[i], pts[i+1], (255, 255, 0), 2, cv.LINE_AA)
 
-            # 3. Draw queue order numbers
             # 3. Draw queue order numbers
             for idx, qb in enumerate(route_manager.queue):
                 if qb.color_name == "waypoint":
@@ -252,19 +258,6 @@ def annotate(
     if route_manager is not None:
         debug_lines.append(f"route_state={route_manager.state.upper()} queue_len={len(route_manager.queue)} visited={len(route_manager.visited_positions)}")
     if robot_pose is not None:
-        #draw_robot_footprint(out, robot_pose.x, robot_pose.y, robot_pose.heading_rad, ROBOT_LENGTH_CM, ROBOT_WIDTH_CM)
-        #cv.circle(out, (robot_pose.x, robot_pose.y), 8, (0, 255, 0), -1)
-        #marker_point = (robot_pose.x, robot_pose.y)
-
-        #arrow_len = 45
-        #heading_x = math.cos(robot_pose.heading_rad)
-        #heading_y = math.sin(robot_pose.heading_rad)
-        #x2 = int(robot_pose.x + arrow_len * heading_x)
-        #y2 = int(robot_pose.y + arrow_len * heading_y)
-        #cv.arrowedLine(out, (robot_pose.x, robot_pose.y), (x2, y2), (0, 255, 0), 2, tipLength=0.25)
-        #cv.putText(out, "robot", (robot_pose.x + 10, robot_pose.y - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
-        # Draw corrected drive center and heading
         (
             robot_x,
             robot_y,
@@ -298,8 +291,6 @@ def annotate(
 
         cv.line(out, marker_point, robot_point, (255, 255, 0), 2)
         cv.circle(out, robot_point, 7, (255, 255, 0), -1)
-        #cv.putText(out, "raw marker", (marker_point[0] + 10, marker_point[1] + 16), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        #cv.putText(out, "corrected ground point", (robot_point[0] + 10, robot_point[1] + 16), cv.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
 
         # Draw the robot-local axes used for the correction.
         # Blue = robot-local forward, red = robot-local right.
@@ -314,8 +305,6 @@ def annotate(
         )
         cv.arrowedLine(out, marker_point, local_forward_end, (255, 0, 0), 2, tipLength=0.25)
         cv.arrowedLine(out, marker_point, local_right_end, (0, 0, 255), 2, tipLength=0.25)
-        #cv.putText(out, "local forward", (local_forward_end[0] + 5, local_forward_end[1]), cv.FONT_HERSHEY_SIMPLEX, 0.45, (255, 0, 0), 2)
-        #cv.putText(out, "local right", (local_right_end[0] + 5, local_right_end[1]), cv.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 2)
 
         heading_deg = math.degrees(robot_pose.heading_rad)
         corrected_heading_deg = math.degrees(robot_heading)
@@ -354,8 +343,6 @@ def annotate(
             debug_lines.append(
                 f"rotated image offset=({offset_x:.0f},{offset_y:.0f}) norm_pos=({normalized_x:.2f},{normalized_y:.2f})"
             )
-            #debug_lines.append("TUNE ORDER: 1) tune base_fwd/base_right near image center")
-            #debug_lines.append("TUNE ORDER: 2) gains change magnitude; blue/red axes show rotated direction")
     else:
         debug_lines.append("robot_pose=None: using image-center tracking fallback")
         if target_ball is not None:
@@ -364,8 +351,6 @@ def annotate(
             cv.line(out, (center_x, 0), (center_x, out.shape[0]), (255, 255, 0), 1)
             cv.line(out, (center_x, target_ball.y), (target_ball.x, target_ball.y), (255, 0, 255), 2)
             debug_lines.append(f"target=({target_ball.x},{target_ball.y}) center_x={center_x} error_x={error_x}")
-            #if settings is not None:
-            #    debug_lines.append(f"align_deadband={settings.align_deadband_px}px target_radius={settings.target_radius_px}px")
 
     # Draw danger zones
     if danger_contours is not None:

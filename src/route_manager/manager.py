@@ -1,118 +1,17 @@
 import math
-import time
 import cv2 as cv
 import numpy as np
 from typing import Optional, List, Tuple
+
 from config import PERSPECTIVE_PADDING_PX, FIELD_WIDTH_CM, FIELD_HEIGHT_CM
 from models import BallDetection, RobotPose, GoalDetection
 from vision import is_ball_in_danger_zone
+from utils.geometry import (
+    get_middle_obstacles,
+    check_route_segment_for_obstacles,
+    find_bypass_waypoint,
+)
 
-def ccw(A, B, C):
-    return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
-
-def segments_intersect(p1, p2, p3, p4):
-    return ccw(p1, p3, p4) != ccw(p2, p3, p4) and ccw(p1, p2, p3) != ccw(p1, p2, p4)
-
-def segment_intersects_box(xa, ya, xb, yb, box, margin=8.0):
-    x1, y1, x2, y2 = box
-    x1_pad = x1 - margin
-    y1_pad = y1 - margin
-    x2_pad = x2 + margin
-    y2_pad = y2 + margin
-    
-    p1 = (xa, ya)
-    p2 = (xb, yb)
-    if segments_intersect(p1, p2, (x1_pad, y1_pad), (x1_pad, y2_pad)):
-        return True
-    if segments_intersect(p1, p2, (x2_pad, y1_pad), (x2_pad, y2_pad)):
-        return True
-    if segments_intersect(p1, p2, (x1_pad, y1_pad), (x2_pad, y1_pad)):
-        return True
-    if segments_intersect(p1, p2, (x1_pad, y2_pad), (x2_pad, y2_pad)):
-        return True
-    return False
-
-def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, frame_height: int, scale_x: float, scale_y: float) -> list[tuple[float, float, float, float]]:
-    obstacles = []
-    for c in danger_contours:
-        x_px, y_px, w_px, h_px = cv.boundingRect(c)
-        if w_px >= 0.8 * frame_width or h_px >= 0.8 * frame_height:
-            continue
-        x1 = (x_px - PERSPECTIVE_PADDING_PX) / scale_x
-        y1 = (y_px - PERSPECTIVE_PADDING_PX) / scale_y
-        x2 = (x_px + w_px - PERSPECTIVE_PADDING_PX) / scale_x
-        y2 = (y_px + h_px - PERSPECTIVE_PADDING_PX) / scale_y
-        obstacles.append((x1, y1, x2, y2))
-    return obstacles
-
-def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=8.0):
-    for obs in obstacles:
-        if segment_intersects_box(xa, ya, xb, yb, obs, margin):
-            return obs
-    return None
-
-def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0) -> Optional[tuple[float, float]]:
-    x1, y1, x2, y2 = obstacle
-    
-    # Use the passed margin (defaults to obstacle_avoidance_margin_cm) as the wall margin
-    _wall_margin = margin
-    min_x, max_x = _wall_margin, FIELD_WIDTH_CM - _wall_margin
-    min_y, max_y = _wall_margin, FIELD_HEIGHT_CM - _wall_margin
-    
-    x1_pad = x1 - margin
-    y1_pad = y1 - margin
-    x2_pad = x2 + margin
-    y2_pad = y2 + margin
-    
-    corners = [
-        (x1_pad, y1_pad),
-        (x2_pad, y1_pad),
-        (x1_pad, y2_pad),
-        (x2_pad, y2_pad),
-    ]
-    
-    candidates = []
-    for cx, cy in corners:
-        # Clip candidate to valid field boundaries
-        cx_clipped = max(min_x, min(cx, max_x))
-        cy_clipped = max(min_y, min(cy, max_y))
-        
-        # Check if the clipped corner lies inside the obstacle (with a small 2.0 cm safety buffer)
-        x1_obs = x1 - 2.0
-        y1_obs = y1 - 2.0
-        x2_obs = x2 + 2.0
-        y2_obs = y2 + 2.0
-        if x1_obs <= cx_clipped <= x2_obs and y1_obs <= cy_clipped <= y2_obs:
-            continue
-            
-        # Check segment intersection from start (robot) to waypoint
-        start_to_wp_clear = not segment_intersects_box(xa, ya, cx_clipped, cy_clipped, obstacle, margin=3.0)
-        
-        # Check segment intersection from waypoint to end (target)
-        wp_to_end_clear = not segment_intersects_box(cx_clipped, cy_clipped, xb, yb, obstacle, margin=3.0)
-        
-        dist = math.hypot(cx_clipped - xa, cy_clipped - ya) + math.hypot(xb - cx_clipped, yb - cy_clipped)
-        
-        # Priority mapping:
-        # Priority 1: Both segments are clear
-        # Priority 2: Only start-to-wp segment is clear (we can drive to it safely, then re-plan)
-        # Priority 3: start-to-wp crosses the obstacle (unsafe)
-        if start_to_wp_clear and wp_to_end_clear:
-            priority = 1
-        elif start_to_wp_clear:
-            priority = 2
-        else:
-            priority = 3
-            
-        candidates.append((priority, dist, (cx_clipped, cy_clipped)))
-        
-    if candidates:
-        # Sort by priority first (lower is better), then by distance (lower is better)
-        candidates.sort(key=lambda x: (x[0], x[1]))
-        if candidates[0][0] <= 2:
-            return candidates[0][2]
-            
-    return None
 
 class RouteManager:
     def __init__(self, scan_duration: float = 2.0, re_eval_duration: float = 2.0):
@@ -442,13 +341,6 @@ class RouteManager:
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
                     obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
                     if obs is not None:
-                        """
-                        print(
-                            "[RouteManager] Dynamic segment crosses obstacle: "
-                            f"from=({r_x_cm:.1f},{r_y_cm:.1f}) to=({t_x_cm:.1f},{t_y_cm:.1f}) "
-                            f"target={target.color_name} obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
-                        )
-                        """
                         wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
                         if wp is not None:
                             wp_x, wp_y = wp
@@ -474,8 +366,6 @@ class RouteManager:
                                 target = wp_ball
                                 t_x_cm, t_y_cm = wp_x, wp_y
                                 dist_to_target = math.hypot(t_x_cm - r_x_cm, t_y_cm - r_y_cm)
-                            #else:
-                                #print(f"[RouteManager] Skip dynamic insertion: generated waypoint at ({wp_x:.1f}, {wp_y:.1f}) is too close to robot ({r_x_cm:.1f}, {r_y_cm:.1f}).")
                 
                 if target.color_name != "waypoint" and dist_to_target < 30.0:
                     # Is target currently matched by any detection?
@@ -494,6 +384,7 @@ class RouteManager:
             
             # Return target to follow
             return self.queue[0], "", ""
+
         elif self.state == "commit":
             # Driving forward during commit phase
             if self.commit_start_time is None:

@@ -8,13 +8,12 @@ import platform
 from config import *
 from robot_client import RobotClient
 from models import NavigationContext, NavigationState, GoalDetection, RobotPose, NavigationResult
-from navigation import decide_command, get_scales, decide_immediate_command, corrected_robot_pose_values
+from navigation import decide_command, decide_immediate_command
 from route_manager import RouteManager
 from ui import annotate
 from vision import (
     BallDetectionTuner,
     BallHandoffManager,
-    choose_target_ball,
     correct_perspective,
     detect_balls,
     detect_danger_zones,
@@ -23,6 +22,7 @@ from vision import (
     match_candidate_target,
     detect_field_corners,
 )
+from utils import get_scales, corrected_robot_pose_values
 
 
 def parse_args() -> argparse.Namespace:

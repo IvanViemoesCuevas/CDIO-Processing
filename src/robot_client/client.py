@@ -1,4 +1,3 @@
-# Robot communication
 import socket
 import time
 from typing import Optional
