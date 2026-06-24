@@ -142,10 +142,10 @@ def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=8.0):
 def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0) -> Optional[tuple[float, float]]:
     x1, y1, x2, y2 = obstacle
     
-    # Use a smaller wall margin to avoid pushing waypoints inside the obstacle when close to boundaries
-    wall_margin = 8.0
-    min_x, max_x = wall_margin, FIELD_WIDTH_CM - wall_margin
-    min_y, max_y = wall_margin, FIELD_HEIGHT_CM - wall_margin
+    # Use the passed margin (defaults to obstacle_avoidance_margin_cm) as the wall margin
+    _wall_margin = margin
+    min_x, max_x = _wall_margin, FIELD_WIDTH_CM - _wall_margin
+    min_y, max_y = _wall_margin, FIELD_HEIGHT_CM - _wall_margin
     
     x1_pad = x1 - margin
     y1_pad = y1 - margin
