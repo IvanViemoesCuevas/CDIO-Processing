@@ -5,7 +5,6 @@ import numpy as np
 import cv2 as cv
 
 from models import *
-from src.config import Settings
 from config import PERSPECTIVE_PADDING_PX,  Settings
 from vision import find_danger_perspective_points, is_ball_in_danger_zone
 from typing import Optional
@@ -56,10 +55,10 @@ def draw_danger_zones(
     )
 
     # Robot dimensions in cm (matching vision.py)
-    WHEEL_AREA_WIDTH_CM = 20.0  # Width (left-right)
-    WHEEL_AREA_LENGTH_CM = 7.0  # Length (front-back)
-    BOX_AREA_WIDTH_CM = 12.0  # Width (left-right)
-    BOX_AREA_LENGTH_CM = 42.0  # Length (front-back)
+    WHEEL_AREA_WIDTH_CM = 21.0  # Width (left-right)
+    WHEEL_AREA_LENGTH_CM = 8.0  # Length (front-back)
+    BOX_AREA_WIDTH_CM = 13.0  # Width (left-right)
+    BOX_AREA_LENGTH_CM = 45.0  # Length (front-back)
 
     # Convert cm to pixels using the scale factors
     wheel_width_px = WHEEL_AREA_WIDTH_CM * scale_x

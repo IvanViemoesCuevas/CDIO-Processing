@@ -600,10 +600,10 @@ def detect_danger_zones(
         scale_y = height / FIELD_HEIGHT_CM
 
         # Robot dimensions in cm (BOTH centered at robot center)
-        WHEEL_AREA_WIDTH_CM = 20.0
-        WHEEL_AREA_LENGTH_CM = 7.0
-        BOX_AREA_WIDTH_CM = 12.0
-        BOX_AREA_LENGTH_CM = 42.0
+        WHEEL_AREA_WIDTH_CM = 21.0
+        WHEEL_AREA_LENGTH_CM = 8.0
+        BOX_AREA_WIDTH_CM = 13.0
+        BOX_AREA_LENGTH_CM = 45.0
 
         # Convert danger points to robot-local coordinates using corrected pose
         dx_img: NDArray[np.float32] = np.asarray(xs, dtype=np.float32) - np.float32(corrected_x)
