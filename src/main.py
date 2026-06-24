@@ -4,6 +4,7 @@ import time
 import cv2 as cv
 from typing import Optional
 import platform
+import numpy as np
 
 from config import *
 from robot_client import RobotClient
@@ -38,7 +39,56 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+
+def overlay_png(background, overlay, x, y):
+    h, w = overlay.shape[:2]
+
+    roi = background[y:y + h, x:x + w]
+
+    alpha = overlay[:, :, 3] / 255.0
+
+    for c in range(3):
+        roi[:, :, c] = (
+                alpha * overlay[:, :, c] +
+                (1 - alpha) * roi[:, :, c]
+        )
+
+    background[y:y + h, x:x + w] = roi
+
+
+def rotate_image(mat, angle):
+    height, width = mat.shape[:2]
+    image_center = (width / 2, height / 2)
+
+    rotation_mat = cv.getRotationMatrix2D(image_center, angle, 1.0)
+
+    abs_cos = abs(rotation_mat[0, 0])
+    abs_sin = abs(rotation_mat[0, 1])
+
+    bound_w = int(height * abs_sin + width * abs_cos)
+    bound_h = int(height * abs_cos + width * abs_sin)
+
+    rotation_mat[0, 2] += bound_w / 2 - image_center[0]
+    rotation_mat[1, 2] += bound_h / 2 - image_center[1]
+
+    return cv.warpAffine(
+        mat,
+        rotation_mat,
+        (bound_w, bound_h),
+        flags=cv.INTER_LINEAR,
+        borderMode=cv.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0)  # transparent border
+    )
+
+sim_x = 1850
+sim_y = 400 #350
+sim_angle = 200
+move_step = 5
+turn_step = 1
+command_to_send = None
+
 def main() -> int:
+    global sim_x, sim_y, sim_angle, move_step, turn_step, command_to_send
     # Parse arguments from terminal and set the settings
     args = parse_args()
     settings = Settings(
@@ -47,14 +97,14 @@ def main() -> int:
     )
 
     # Get the video capture
-    if platform.system() == "Windows":
-        cap0 = cv.VideoCapture(1, cv.CAP_DSHOW)
-    else:
-        cap0 = cv.VideoCapture(0)
+    #if platform.system() == "Windows":
+    #    cap0 = cv.VideoCapture(1, cv.CAP_DSHOW)
+    #else:
+    #    cap0 = cv.VideoCapture(0)
 
-    if not cap0.isOpened():
-        print("Error opening video stream 0")
-        return 1
+    #if not cap0.isOpened():
+    #    print("Error opening video stream 0")
+    #    return 1
 
     # Connect to the client
     client: Optional[RobotClient] = None
@@ -96,16 +146,23 @@ def main() -> int:
 
     try:
         while True:
-            #image_path = "Test_Image.png"  # Change this to your image path
-            #frame = cv.imread(image_path)
-            #if frame is None:
-            #    print(f"Error reading image from {image_path}")
-            #    break
-
-            ok, frame = cap0.read()
-            if not ok:
-                print("Error reading frame")
+            image_path = "test_img_4.png"  # Change this to your image path
+            frame = cv.imread(image_path)
+            if frame is None:
+                print(f"Error reading image from {image_path}")
                 break
+
+            overlay = cv.imread("aruco_marker.png", cv.IMREAD_UNCHANGED)
+            rotated_overlay = rotate_image(overlay, sim_angle)
+            h, w = rotated_overlay.shape[:2]
+            draw_x = int(sim_x - w / 2)
+            draw_y = int(sim_y - h / 2)
+            overlay_png(frame, rotated_overlay, draw_x, draw_y)
+
+            #ok, frame = cap0.read()
+            #if not ok:
+            #    print("Error reading frame")
+            #    break
 
             frame = correct_perspective(frame)
 
@@ -398,30 +455,33 @@ def main() -> int:
                     ),
                 )
 
+
             # Check for manual key
             key = cv.waitKey(1) & 0xFF
+
             if key == ord('q'):
                 if client is not None:
                     client.send_char(CMD_QUIT)
                 break
-            elif key == ord('x'):
-                if client is not None:
-                    client.send_char(CMD_SWITCH)
-            elif key == ord('i'):
-                if client is not None:
-                    client.send_char(CMD_FORWARD)
-            elif key == ord('k'):
-                if client is not None:
-                    client.send_char(CMD_BACKWARD)
-            elif key == ord('j'):
-                if client is not None:
-                    client.send_char(CMD_LEFT)
-            elif key == ord('l'):
-                if client is not None:
-                    client.send_char(CMD_RIGHT)
+
+            if args.dry_run:
+                if command_to_send == CMD_LEFT:
+                    sim_angle += turn_step
+                elif command_to_send == CMD_RIGHT:
+                    sim_angle -= turn_step
+                elif command_to_send == CMD_FORWARD:
+                    rad = math.radians(sim_angle)
+                    sim_x += move_step * math.cos(rad)
+                    sim_y -= move_step * math.sin(rad)
+                elif command_to_send == CMD_BACKWARD:
+                    rad = math.radians(sim_angle)
+                    sim_x -= move_step * math.cos(rad)
+                    sim_y += move_step * math.sin(rad)
+
+            #print(f"sim x={sim_x:.1f} y={sim_y:.1f} angle={sim_angle:.1f}")
 
     finally:
-        cap0.release()
+        #cap0.release()
         if client is not None:
             client.send_char(CMD_QUIT)
             client.close()

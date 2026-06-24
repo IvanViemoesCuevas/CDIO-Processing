@@ -201,14 +201,14 @@ class RouteManager:
                 target_x_cm = (target.x - PERSPECTIVE_PADDING_PX) / scale_x
                 target_y_cm = (target.y - PERSPECTIVE_PADDING_PX) / scale_y
                 
-                obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
+                obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles)
                 if obs is not None:
                     print(
                         "[RouteManager] Planned segment crosses obstacle: "
                         f"from=({curr_x:.1f},{curr_y:.1f}) to=({target_x_cm:.1f},{target_y_cm:.1f}) "
                         f"obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
                     )
-                    wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
+                    wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs)
                     if wp is not None:
                         wp_x, wp_y = wp
                         wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
@@ -259,14 +259,14 @@ class RouteManager:
                     contours_to_use = self.cumulative_contours if self.cumulative_contours else current_danger_contours
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
 
-                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
+                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles)
                     if obs is not None:
                         print(
                             "[RouteManager] Handoff segment crosses obstacle: "
                             f"from=({r_x_cm:.1f},{r_y_cm:.1f}) to=({align_x_cm:.1f},{align_y_cm:.1f}) "
                             f"obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
                         )
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
+                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs)
                         if wp is not None:
                             wp_x, wp_y = wp
                             waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
@@ -339,9 +339,9 @@ class RouteManager:
                     frame_width = danger_mask.shape[1] if danger_mask is not None else 1280
                     frame_height = danger_mask.shape[0] if danger_mask is not None else 960
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
-                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
+                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles)
                     if obs is not None:
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
+                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs)
                         if wp is not None:
                             wp_x, wp_y = wp
                             # Only insert if the waypoint is not already extremely close to the robot

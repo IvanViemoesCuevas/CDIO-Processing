@@ -16,7 +16,9 @@ from utils.geometry import (
     corrected_robot_pose_values,
     normalize_angle_rad,
     get_scales,
+    get_middle_obstacles,
 )
+
 from navigation import (
     MARKER_HEADING_OFFSET_DEG,
     MARKER_TO_DRIVE_CENTER_FORWARD_PX,
@@ -96,6 +98,48 @@ def annotate(
             )
 
     scale_x, scale_y = get_scales(out.shape[1], out.shape[0])
+
+    # Draw the box around the cross
+    if danger_contours is not None:
+        obstacles = get_middle_obstacles(
+            danger_contours,
+            out.shape[1],
+            out.shape[0],
+            scale_x,
+            scale_y,
+        )
+
+        for x1_cm, y1_cm, x2_cm, y2_cm in obstacles:
+            # Actual obstacle box
+            x1_px = int(round(PERSPECTIVE_PADDING_PX + x1_cm * scale_x))
+            y1_px = int(round(PERSPECTIVE_PADDING_PX + y1_cm * scale_y))
+            x2_px = int(round(PERSPECTIVE_PADDING_PX + x2_cm * scale_x))
+            y2_px = int(round(PERSPECTIVE_PADDING_PX + y2_cm * scale_y))
+
+            cv.rectangle(out, (x1_px, y1_px), (x2_px, y2_px), (0, 255, 255), 2)
+
+            # Obstacle margin box
+            mx1_cm = x1_cm - Settings.obstacle_avoidance_margin_cm
+            my1_cm = y1_cm - Settings.obstacle_avoidance_margin_cm
+            mx2_cm = x2_cm + Settings.obstacle_avoidance_margin_cm
+            my2_cm = y2_cm + Settings.obstacle_avoidance_margin_cm
+
+            mx1_px = int(round(PERSPECTIVE_PADDING_PX + mx1_cm * scale_x))
+            my1_px = int(round(PERSPECTIVE_PADDING_PX + my1_cm * scale_y))
+            mx2_px = int(round(PERSPECTIVE_PADDING_PX + mx2_cm * scale_x))
+            my2_px = int(round(PERSPECTIVE_PADDING_PX + my2_cm * scale_y))
+
+            cv.rectangle(out, (mx1_px, my1_px), (mx2_px, my2_px), (0, 165, 255), 2)
+
+            cv.putText(
+                out,
+                "obstacle margin",
+                (mx1_px, max(20, my1_px - 8)),
+                cv.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 165, 255),
+                2,
+            )
 
     # Mark the detected balls
     for b in balls:

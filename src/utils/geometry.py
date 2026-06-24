@@ -3,7 +3,7 @@ import numpy as np
 import cv2 as cv
 from typing import Optional
 
-from config import PERSPECTIVE_PADDING_PX, FIELD_WIDTH_CM, FIELD_HEIGHT_CM
+from config import PERSPECTIVE_PADDING_PX, FIELD_WIDTH_CM, FIELD_HEIGHT_CM, Settings
 from navigation.calibration import (
     MARKER_HEADING_OFFSET_DEG,
     MARKER_TO_DRIVE_CENTER_FORWARD_PX,
@@ -98,12 +98,12 @@ def segments_intersect(p1, p2, p3, p4):
     return ccw(p1, p3, p4) != ccw(p2, p3, p4) and ccw(p1, p2, p3) != ccw(p1, p2, p4)
 
 
-def segment_intersects_box(xa, ya, xb, yb, box, margin=8.0):
+def segment_intersects_box(xa, ya, xb, yb, box):
     x1, y1, x2, y2 = box
-    x1_pad = x1 - margin
-    y1_pad = y1 - margin
-    x2_pad = x2 + margin
-    y2_pad = y2 + margin
+    x1_pad = x1 - Settings.obstacle_avoidance_margin_cm
+    y1_pad = y1 - Settings.obstacle_avoidance_margin_cm
+    x2_pad = x2 + Settings.obstacle_avoidance_margin_cm
+    y2_pad = y2 + Settings.obstacle_avoidance_margin_cm
     
     p1 = (xa, ya)
     p2 = (xb, yb)
@@ -132,22 +132,19 @@ def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, fr
     return obstacles
 
 
-def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=15.0):
+def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles):
     for obs in obstacles:
-        if segment_intersects_box(xa, ya, xb, yb, obs, margin):
+        if segment_intersects_box(xa, ya, xb, yb, obs):
             return obs
     return None
 
 
-def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=15.0) -> Optional[tuple[float, float]]:
+def find_bypass_waypoint(xa, ya, xb, yb, obstacle) -> Optional[tuple[float, float]]:
     # Obstacle bounding box: (left, top, right, bottom)
     x1, y1, x2, y2 = obstacle
 
-    # Desired minimum clearance from the obstacle when passing it
-    cross_clearance_cm = 20.0
-
     # Stop short of the target so the robot approaches the ball indirectly
-    ball_offset_cm = 20.0
+    ball_offset_cm = 25.0
 
     # Obstacle center point
     obs_cx = (x1 + x2) / 2.0
@@ -198,15 +195,22 @@ def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=15.0) -> Optional[tupl
         return math.hypot(px - closest_x, py - closest_y)
 
     # Move the waypoint sideways until the required clearance is reached
-    for _ in range(80):
-        if distance_from_box(wp_x, wp_y) >= cross_clearance_cm:
+    for _ in range(1000):
+        if distance_from_box(wp_x, wp_y) >= Settings.obstacle_avoidance_margin_cm:
             break
         wp_x += perp_x
         wp_y += perp_y
 
     # Keep waypoint safely inside field boundaries
-    wall_margin = margin
+    wall_margin = Settings.obstacle_avoidance_margin_cm
     wp_x = max(wall_margin, min(wp_x, FIELD_WIDTH_CM - wall_margin))
     wp_y = max(wall_margin, min(wp_y, FIELD_HEIGHT_CM - wall_margin))
+
+    # If the waypoint is still blocked by the obstacle, move it back towards the start
+    for _ in range(1000):
+        if not segment_intersects_box(xa, ya, wp_x, wp_y, obstacle):
+            break
+        wp_x = xa + 0.85 * (wp_x - xa)
+        wp_y = ya + 0.85 * (wp_y - ya)
 
     return wp_x, wp_y
