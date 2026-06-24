@@ -132,72 +132,81 @@ def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, fr
     return obstacles
 
 
-def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=8.0):
+def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=15.0):
     for obs in obstacles:
         if segment_intersects_box(xa, ya, xb, yb, obs, margin):
             return obs
     return None
 
 
-def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0) -> Optional[tuple[float, float]]:
+def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=15.0) -> Optional[tuple[float, float]]:
+    # Obstacle bounding box: (left, top, right, bottom)
     x1, y1, x2, y2 = obstacle
-    
-    # Use the passed margin (defaults to obstacle_avoidance_margin_cm) as the wall margin
-    _wall_margin = margin
-    min_x, max_x = _wall_margin, FIELD_WIDTH_CM - _wall_margin
-    min_y, max_y = _wall_margin, FIELD_HEIGHT_CM - _wall_margin
-    
-    x1_pad = x1 - margin
-    y1_pad = y1 - margin
-    x2_pad = x2 + margin
-    y2_pad = y2 + margin
-    
-    corners = [
-        (x1_pad, y1_pad),
-        (x2_pad, y1_pad),
-        (x1_pad, y2_pad),
-        (x2_pad, y2_pad),
-    ]
-    
-    candidates = []
-    for cx, cy in corners:
-        # Clip candidate to valid field boundaries
-        cx_clipped = max(min_x, min(cx, max_x))
-        cy_clipped = max(min_y, min(cy, max_y))
-        
-        # Check if the clipped corner lies inside the obstacle (with a small 2.0 cm safety buffer)
-        x1_obs = x1 - 2.0
-        y1_obs = y1 - 2.0
-        x2_obs = x2 + 2.0
-        y2_obs = y2 + 2.0
-        if x1_obs <= cx_clipped <= x2_obs and y1_obs <= cy_clipped <= y2_obs:
-            continue
-            
-        # Check segment intersection from start (robot) to waypoint
-        start_to_wp_clear = not segment_intersects_box(xa, ya, cx_clipped, cy_clipped, obstacle, margin=3.0)
-        
-        # Check segment intersection from waypoint to end (target)
-        wp_to_end_clear = not segment_intersects_box(cx_clipped, cy_clipped, xb, yb, obstacle, margin=3.0)
-        
-        dist = math.hypot(cx_clipped - xa, cy_clipped - ya) + math.hypot(xb - cx_clipped, yb - cy_clipped)
-        
-        # Priority mapping:
-        # Priority 1: Both segments are clear
-        # Priority 2: Only start-to-wp segment is clear (we can drive to it safely, then re-plan)
-        # Priority 3: start-to-wp crosses the obstacle (unsafe)
-        if start_to_wp_clear and wp_to_end_clear:
-            priority = 1
-        elif start_to_wp_clear:
-            priority = 2
-        else:
-            priority = 3
-            
-        candidates.append((priority, dist, (cx_clipped, cy_clipped)))
-        
-    if candidates:
-        # Sort by priority first (lower is better), then by distance (lower is better)
-        candidates.sort(key=lambda x: (x[0], x[1]))
-        if candidates[0][0] <= 2:
-            return candidates[0][2]
-            
-    return None
+
+    # Desired minimum clearance from the obstacle when passing it
+    cross_clearance_cm = 20.0
+
+    # Stop short of the target so the robot approaches the ball indirectly
+    ball_offset_cm = 20.0
+
+    # Obstacle center point
+    obs_cx = (x1 + x2) / 2.0
+    obs_cy = (y1 + y2) / 2.0
+
+    # Direction vector from current position to target
+    route_dx = xb - xa
+    route_dy = yb - ya
+    route_len = math.hypot(route_dx, route_dy)
+
+    # No meaningful route if start and target are the same
+    if route_len < 1e-6:
+        return None
+
+    # Normalize route direction
+    route_dx /= route_len
+    route_dy /= route_len
+
+    # Create a base point slightly before the target
+    # (prevents driving directly onto the ball/target)
+    base_x = xb - route_dx * ball_offset_cm
+    base_y = yb - route_dy * ball_offset_cm
+
+    # Determine which side of the route the obstacle lies on
+    side = (base_x - obs_cx) * route_dy - (base_y - obs_cy) * route_dx
+
+    # Two perpendicular directions to the route
+    perp1_x = -route_dy
+    perp1_y = route_dx
+
+    perp2_x = route_dy
+    perp2_y = -route_dx
+
+    # Choose the perpendicular direction that moves away from the obstacle
+    if side >= 0:
+        perp_x, perp_y = perp2_x, perp2_y
+    else:
+        perp_x, perp_y = perp1_x, perp1_y
+
+    # Start waypoint search from the base point
+    wp_x = base_x
+    wp_y = base_y
+
+    def distance_from_box(px, py):
+        """Shortest distance from a point to the obstacle rectangle."""
+        closest_x = max(x1, min(px, x2))
+        closest_y = max(y1, min(py, y2))
+        return math.hypot(px - closest_x, py - closest_y)
+
+    # Move the waypoint sideways until the required clearance is reached
+    for _ in range(80):
+        if distance_from_box(wp_x, wp_y) >= cross_clearance_cm:
+            break
+        wp_x += perp_x
+        wp_y += perp_y
+
+    # Keep waypoint safely inside field boundaries
+    wall_margin = margin
+    wp_x = max(wall_margin, min(wp_x, FIELD_WIDTH_CM - wall_margin))
+    wp_y = max(wall_margin, min(wp_y, FIELD_HEIGHT_CM - wall_margin))
+
+    return wp_x, wp_y
