@@ -15,7 +15,6 @@ from models import (
     NavigationResult,
     NavigationState,
     BallDetection,
-    DangerFlags,
 )
 from utils.geometry import (
     corrected_robot_pose_values,
@@ -42,11 +41,6 @@ def decide_immediate_command(
     danger = context.danger
     danger_state = context.danger_state
     target_ball = context.target_ball
-
-    # Disable danger detection if in delivery/unload/delivering phase of handoff
-    if state.handoff_phase in ("approaching_delivery", "final_aligning", "starting_unload", "delivering"):
-        danger = DangerFlags()
-        danger_state = None
 
     # Use specific tolerances for handoff, otherwise use defaults
     arrival_dist = arrival_distance_cm if arrival_distance_cm is not None else settings.pose_arrival_distance_cm
