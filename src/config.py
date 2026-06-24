@@ -31,6 +31,7 @@ class Settings:
     pose_arrival_distance_cm: float = 20.0
     waypoint_arrival_distance_cm: float = 8.0
     obstacle_avoidance_margin_cm: float = 15.0
+    target_missing_frames_limit: int = 30
 
     # Danger detection
     min_obstacle_area: int = 400

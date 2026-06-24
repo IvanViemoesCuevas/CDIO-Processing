@@ -53,6 +53,12 @@ def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles, margin=8.0):
 
 def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0) -> Optional[tuple[float, float]]:
     x1, y1, x2, y2 = obstacle
+    
+    # Use the passed margin (defaults to obstacle_avoidance_margin_cm) as the wall margin
+    _wall_margin = margin
+    min_x, max_x = _wall_margin, FIELD_WIDTH_CM - _wall_margin
+    min_y, max_y = _wall_margin, FIELD_HEIGHT_CM - _wall_margin
+    
     x1_pad = x1 - margin
     y1_pad = y1 - margin
     x2_pad = x2 + margin
@@ -65,30 +71,47 @@ def find_bypass_waypoint(xa, ya, xb, yb, obstacle, margin=8.0) -> Optional[tuple
         (x2_pad, y2_pad),
     ]
     
-    _wall_margin = 15.0
-    min_x, max_x = _wall_margin, FIELD_WIDTH_CM - _wall_margin
-    min_y, max_y = _wall_margin, FIELD_HEIGHT_CM - _wall_margin
-    
-    valid_candidates = []
+    candidates = []
     for cx, cy in corners:
-        if not (min_x <= cx <= max_x and min_y <= cy <= max_y):
-            continue
-        if segment_intersects_box(xa, ya, cx, cy, obstacle, margin=3.0):
-            continue
-        if segment_intersects_box(cx, cy, xb, yb, obstacle, margin=3.0):
-            continue
-        dist = math.hypot(cx - xa, cy - ya) + math.hypot(xb - cx, yb - cy)
-        valid_candidates.append(((cx, cy), dist))
+        # Clip candidate to valid field boundaries
+        cx_clipped = max(min_x, min(cx, max_x))
+        cy_clipped = max(min_y, min(cy, max_y))
         
-    if not valid_candidates:
-        for cx, cy in corners:
-            if min_x <= cx <= max_x and min_y <= cy <= max_y:
-                dist = math.hypot(cx - xa, cy - ya) + math.hypot(xb - cx, yb - cy)
-                valid_candidates.append(((cx, cy), dist))
-                
-    if valid_candidates:
-        valid_candidates.sort(key=lambda x: x[1])
-        return valid_candidates[0][0]
+        # Check if the clipped corner lies inside the obstacle (with a small 2.0 cm safety buffer)
+        x1_obs = x1 - 2.0
+        y1_obs = y1 - 2.0
+        x2_obs = x2 + 2.0
+        y2_obs = y2 + 2.0
+        if x1_obs <= cx_clipped <= x2_obs and y1_obs <= cy_clipped <= y2_obs:
+            continue
+            
+        # Check segment intersection from start (robot) to waypoint
+        start_to_wp_clear = not segment_intersects_box(xa, ya, cx_clipped, cy_clipped, obstacle, margin=3.0)
+        
+        # Check segment intersection from waypoint to end (target)
+        wp_to_end_clear = not segment_intersects_box(cx_clipped, cy_clipped, xb, yb, obstacle, margin=3.0)
+        
+        dist = math.hypot(cx_clipped - xa, cy_clipped - ya) + math.hypot(xb - cx_clipped, yb - cy_clipped)
+        
+        # Priority mapping:
+        # Priority 1: Both segments are clear
+        # Priority 2: Only start-to-wp segment is clear (we can drive to it safely, then re-plan)
+        # Priority 3: start-to-wp crosses the obstacle (unsafe)
+        if start_to_wp_clear and wp_to_end_clear:
+            priority = 1
+        elif start_to_wp_clear:
+            priority = 2
+        else:
+            priority = 3
+            
+        candidates.append((priority, dist, (cx_clipped, cy_clipped)))
+        
+    if candidates:
+        # Sort by priority first (lower is better), then by distance (lower is better)
+        candidates.sort(key=lambda x: (x[0], x[1]))
+        if candidates[0][0] <= 2:
+            return candidates[0][2]
+            
     return None
 
 class RouteManager:
@@ -459,8 +482,9 @@ class RouteManager:
                     target_matched = (0 in matched_queued_indices)
                     if not target_matched:
                         self.missing_frames += 1
-                        if self.missing_frames >= 10:
-                            print(f"[RouteManager] Target missing for 10 frames at close range. Skipping target.")
+                        missing_limit = getattr(settings, 'target_missing_frames_limit', 10)
+                        if self.missing_frames >= missing_limit:
+                            print(f"[RouteManager] Target missing for {missing_limit} frames at close range. Skipping target.")
                             self.visited_positions.append((t_x_cm, t_y_cm))
                             self.queue.pop(0)
                             self.missing_frames = 0
