@@ -240,7 +240,6 @@ def main() -> int:
                     print("[main] Handoff complete. Transitioning RouteManager to re-evaluation...")
                     route_manager.state = "re_evaluating"
                     nav_state.handoff_phase = "idle"
-                    handoff_manager.reset()
 
             # Determine command and reason
             if command_override:

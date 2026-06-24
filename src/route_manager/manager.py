@@ -259,7 +259,8 @@ class RouteManager:
                     contours_to_use = self.cumulative_contours if self.cumulative_contours else current_danger_contours
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
 
-                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
+                    check_margin = max(6.0, settings.obstacle_avoidance_margin_cm - 7.0)
+                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles, margin=check_margin)
                     if obs is not None:
                         print(
                             "[RouteManager] Handoff segment crosses obstacle: "
@@ -339,7 +340,8 @@ class RouteManager:
                     frame_width = danger_mask.shape[1] if danger_mask is not None else 1280
                     frame_height = danger_mask.shape[0] if danger_mask is not None else 960
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
-                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=settings.obstacle_avoidance_margin_cm)
+                    check_margin = max(6.0, settings.obstacle_avoidance_margin_cm - 7.0)
+                    obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles, margin=check_margin)
                     if obs is not None:
                         wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs, margin=settings.obstacle_avoidance_margin_cm)
                         if wp is not None:
@@ -505,10 +507,6 @@ class RouteManager:
             return None, "s", "re_evaluating"
 
         elif self.state == "idle":
-            # If we detect any balls on the field while idle, start a new run
-            if balls:
-                print("[RouteManager] New balls detected in idle state. Restarting run...")
-                self.state = "scanning"
             return None, "s", "idle"
 
         return None, "", ""
