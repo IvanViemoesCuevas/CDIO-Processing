@@ -33,8 +33,6 @@ class Settings:
     danger_distance_cm: float = 2.0
     danger_too_close_cm: float = 2.0
     danger_rear_ignore_cm: float = 0.0
-    avoidance_escape_repeats: int = 2
-    avoidance_escape_max_sec: float = 20.0
 
     # Robot footprint used for danger detection.
     robot_length_cm: float = 45.0

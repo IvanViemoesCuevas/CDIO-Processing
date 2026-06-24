@@ -47,11 +47,6 @@ class NavigationState:
     last_target_seen_time: float = 0.0
     handoff_phase: str = "idle"  # idle, approaching_alignment, aligning, midway_pause, approaching_delivery, delivering, done
     last_command: str = ""
-    avoidance_turn_command: str = ""
-    avoidance_turn_count: int = 0
-    escape_turn_command: str = ""
-    escape_undo_command: str = ""
-    escape_turn_until: float = 0.0
 
 
 @dataclass
