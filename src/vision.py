@@ -701,7 +701,7 @@ def is_ball_in_danger_zone(ball: BallDetection, danger_contours: list[np.ndarray
         if dist_cm < min_dist_cm:
             min_dist_cm = dist_cm
             
-    return min_dist_cm <= 5.0
+    return min_dist_cm <= 7.0
 
 def find_danger_perspective_points(frame: np.ndarray) -> np.ndarray | None:
     mask = build_danger_mask(frame)

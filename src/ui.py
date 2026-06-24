@@ -5,7 +5,7 @@ import numpy as np
 import cv2 as cv
 
 from models import *
-from src.config import Settings
+from config import Settings
 from config import PERSPECTIVE_PADDING_PX,  Settings
 from vision import find_danger_perspective_points, is_ball_in_danger_zone
 from typing import Optional
