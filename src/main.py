@@ -81,7 +81,7 @@ def rotate_image(mat, angle):
     )
 
 sim_x = 1850
-sim_y = 400 #350
+sim_y = 300
 sim_angle = 200
 move_step = 5
 turn_step = 1
@@ -96,15 +96,15 @@ def main() -> int:
         port=args.port,
     )
 
-    # Get the video capture
-    #if platform.system() == "Windows":
-    #    cap0 = cv.VideoCapture(1, cv.CAP_DSHOW)
-    #else:
-    #    cap0 = cv.VideoCapture(0)
+    #Get the video capture
+    if platform.system() == "Windows":
+        cap0 = cv.VideoCapture(1, cv.CAP_DSHOW)
+    else:
+        cap0 = cv.VideoCapture(0)
 
-    #if not cap0.isOpened():
-    #    print("Error opening video stream 0")
-    #    return 1
+    if not cap0.isOpened():
+        print("Error opening video stream 0")
+        return 1
 
     # Connect to the client
     client: Optional[RobotClient] = None
@@ -146,7 +146,8 @@ def main() -> int:
 
     try:
         while True:
-            image_path = "test_img_4.png"  # Change this to your image path
+            """
+            image_path = "test_img_7.png"  # Change this to your image path
             frame = cv.imread(image_path)
             if frame is None:
                 print(f"Error reading image from {image_path}")
@@ -158,11 +159,12 @@ def main() -> int:
             draw_x = int(sim_x - w / 2)
             draw_y = int(sim_y - h / 2)
             overlay_png(frame, rotated_overlay, draw_x, draw_y)
+            """
 
-            #ok, frame = cap0.read()
-            #if not ok:
-            #    print("Error reading frame")
-            #    break
+            ok, frame = cap0.read()
+            if not ok:
+                print("Error reading frame")
+                break
 
             frame = correct_perspective(frame)
 
@@ -390,7 +392,10 @@ def main() -> int:
             # --- Command Sending (unchanged) ---
             now_time = time.time()
             is_one_shot_switch = command == CMD_SWITCH and (reason == "handoff:start_unload" or reason == "handoff:done_stop")
-            is_safety_override = reason.startswith("override_safety:danger")
+            is_safety_override = (
+                    reason.startswith("override_safety:danger")
+                    or reason.startswith("danger:")
+            )
 
             should_send = (
                     is_one_shot_switch
@@ -406,6 +411,7 @@ def main() -> int:
                 if client is not None:
                     client.send_char(command_to_send)
                 print(f"sent={command_to_send} reason={reason}")
+                nav_state.last_command = command_to_send
                 last_send_command = command_to_send
                 last_send_time = now_time
 

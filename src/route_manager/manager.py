@@ -9,7 +9,9 @@ from vision import is_ball_in_danger_zone
 from utils.geometry import (
     get_middle_obstacles,
     check_route_segment_for_obstacles,
-    find_bypass_waypoint,
+    plan_obstacle_safe_waypoints,
+    waypoint_from_ball_opposite_cross,
+    obstacle_containing_point,
 )
 
 
@@ -33,6 +35,16 @@ class RouteManager:
         self.re_eval_balls: List[BallDetection] = []
         self.re_eval_danger_mask = None
 
+    def _make_waypoint_ball(self, x_cm, y_cm, scale_x, scale_y):
+        return BallDetection(
+            x=int(round(PERSPECTIVE_PADDING_PX + x_cm * scale_x)),
+            y=int(round(PERSPECTIVE_PADDING_PX + y_cm * scale_y)),
+            radius=12.0,
+            color_name="waypoint",
+            confidence=1.0,
+            circularity=1.0,
+        )
+
     def update(
         self,
         current_time: float,
@@ -45,6 +57,7 @@ class RouteManager:
         current_danger_contours: list = [],
         small_goal: Optional[GoalDetection] = None,
     ) -> Tuple[Optional[BallDetection], str, str]:
+        print(self.state)
         """
         Updates the route planning state machine.
         Returns:
@@ -100,7 +113,7 @@ class RouteManager:
                 matched = False
                 for ub in unique_balls:
                     dist = math.hypot(cm_x - ub['x_cm'], cm_y - ub['y_cm'])
-                    if dist < 10.0:  # 10 cm clustering threshold
+                    if dist < 3.0:  # 10 cm clustering threshold
                         n = ub['count']
                         ub['x_cm'] = (ub['x_cm'] * n + cm_x) / (n + 1)
                         ub['y_cm'] = (ub['y_cm'] * n + cm_y) / (n + 1)
@@ -182,7 +195,9 @@ class RouteManager:
                 print(f"[RouteManager] Planned route with {len(white_balls)} white balls and 1 orange ball.")
             else:
                 print(f"[RouteManager] Planned route with {len(white_balls)} white balls (no orange ball detected).")
-                
+
+
+
             # Detect middle obstacles and build route queue with bypass waypoints
             frame_width = danger_mask.shape[1] if danger_mask is not None else 1280
             frame_height = danger_mask.shape[0] if danger_mask is not None else 960
@@ -193,43 +208,53 @@ class RouteManager:
                     f"[RouteManager] obstacle[{obs_idx}] "
                     f"x=({obs[0]:.1f},{obs[2]:.1f}) y=({obs[1]:.1f},{obs[3]:.1f}) cm"
                 )
-            
+
             final_queue = []
             curr_x, curr_y = start_x, start_y
-            
+
+            # FIXME FROM HERE
+
             for target in route:
                 target_x_cm = (target.x - PERSPECTIVE_PADDING_PX) / scale_x
                 target_y_cm = (target.y - PERSPECTIVE_PADDING_PX) / scale_y
-                
-                obs = check_route_segment_for_obstacles(curr_x, curr_y, target_x_cm, target_y_cm, obstacles)
-                if obs is not None:
-                    print(
-                        "[RouteManager] Planned segment crosses obstacle: "
-                        f"from=({curr_x:.1f},{curr_y:.1f}) to=({target_x_cm:.1f},{target_y_cm:.1f}) "
-                        f"obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
+
+                containing_obs = obstacle_containing_point(target_x_cm, target_y_cm, obstacles)
+
+                if containing_obs is not None:
+                    approach_x, approach_y = waypoint_from_ball_opposite_cross(
+                        target_x_cm,
+                        target_y_cm,
+                        containing_obs,
+                        distance_cm=20.0,
                     )
-                    wp = find_bypass_waypoint(curr_x, curr_y, target_x_cm, target_y_cm, obs)
-                    if wp is not None:
-                        wp_x, wp_y = wp
-                        wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
-                        wp_px_y = int(round(PERSPECTIVE_PADDING_PX + wp_y * scale_y))
-                        wp_ball = BallDetection(
-                            x=wp_px_x,
-                            y=wp_px_y,
-                            radius=12.0,
-                            color_name="waypoint",
-                            confidence=1.0,
-                            circularity=1.0
-                        )
-                        final_queue.append(wp_ball)
-                        print(
-                            f"[RouteManager] Inserted waypoint at ({wp_px_x}, {wp_px_y}) "
-                            f"cm=({wp_x:.1f},{wp_y:.1f}) to avoid obstacle."
-                        )
-                
-                final_queue.append(target)
+
+                    for wp_x, wp_y in plan_obstacle_safe_waypoints(
+                            curr_x, curr_y, approach_x, approach_y, obstacles
+                    ):
+                        final_queue.append(self._make_waypoint_ball(wp_x, wp_y, scale_x, scale_y))
+
+                    final_queue.append(self._make_waypoint_ball(approach_x, approach_y, scale_x, scale_y))
+                    final_queue.append(target)
+
+                    print(
+                        "[RouteManager] Ball inside margined obstacle box. "
+                        f"Inserted opposite-cross approach waypoint cm=({approach_x:.1f},{approach_y:.1f})"
+                    )
+                    continue
+
+                else:
+                    for wp_x, wp_y in plan_obstacle_safe_waypoints(
+                            curr_x, curr_y, target_x_cm, target_y_cm, obstacles
+                    ):
+                        final_queue.append(self._make_waypoint_ball(wp_x, wp_y, scale_x, scale_y))
+                        print(f"[RouteManager] Inserted obstacle waypoint cm=({wp_x:.1f},{wp_y:.1f})")
+
+                    final_queue.append(target)
+
                 curr_x, curr_y = target_x_cm, target_y_cm
-                
+
+            #FIXME TO HERE
+
             self.queue = final_queue
             self.visited_positions = []
             
@@ -245,6 +270,7 @@ class RouteManager:
 
         elif self.state == "executing":
             if not self.queue:
+                print("[RouteManager] Queue empty. Checking path and transitioning to handoff phase.")
                 # Before entering handoff, check whether the straight path to the
                 # alignment point crosses the centre obstacle. If it does, insert a
                 # bypass waypoint so the robot doesn't drive through the cross.
@@ -266,27 +292,30 @@ class RouteManager:
                             f"from=({r_x_cm:.1f},{r_y_cm:.1f}) to=({align_x_cm:.1f},{align_y_cm:.1f}) "
                             f"obs=({obs[0]:.1f},{obs[1]:.1f},{obs[2]:.1f},{obs[3]:.1f})"
                         )
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, align_x_cm, align_y_cm, obs)
-                        if wp is not None:
-                            wp_x, wp_y = wp
-                            waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
-                            if math.hypot(wp_x - r_x_cm, wp_y - r_y_cm) > (waypoint_arrival_dist + 4.0):
-                                wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
-                                wp_px_y = int(round(PERSPECTIVE_PADDING_PX + wp_y * scale_y))
-                                wp_ball = BallDetection(
-                                    x=wp_px_x, y=wp_px_y, radius=12.0,
-                                    color_name="waypoint", confidence=1.0, circularity=1.0,
-                                )
-                                self.queue.append(wp_ball)
-                                print(
-                                    f"[RouteManager] Inserted handoff bypass waypoint at ({wp_px_x}, {wp_px_y}) "
-                                    f"cm=({wp_x:.1f},{wp_y:.1f})"
-                                )
-                                # Stay in executing so the robot drives through the waypoint first
-                                return wp_ball, "", ""
-                            else:
-                                print(f"[RouteManager] Handoff bypass waypoint too close, skipping.")
+                        # FIXME AGAIN FROM HERE
 
+                        wps = plan_obstacle_safe_waypoints(
+                            r_x_cm, r_y_cm, align_x_cm, align_y_cm, obstacles
+                        )
+
+                        print(f"[RouteManager] Handoff waypoint candidates: {wps}")
+
+                        if wps:
+                            wp_x, wp_y = wps[0]
+                            wp_ball = self._make_waypoint_ball(wp_x, wp_y, scale_x, scale_y)
+                            self.queue.append(wp_ball)
+
+                            print(
+                                f"[RouteManager] Inserted handoff waypoint cm=({wp_x:.1f},{wp_y:.1f}) "
+                                f"dist_from_robot={math.hypot(wp_x - r_x_cm, wp_y - r_y_cm):.1f}"
+                            )
+
+                            # Stay in executing. Do NOT enter handoff yet.
+                            return wp_ball, "", ""
+
+                        print("[RouteManager] Handoff path blocked, but no waypoint was generated.")
+
+                        #FIXME AGAIN TO HERE
                 self.state = "handoff"
                 return None, "s", "executing_done"
             
@@ -339,33 +368,28 @@ class RouteManager:
                     frame_width = danger_mask.shape[1] if danger_mask is not None else 1280
                     frame_height = danger_mask.shape[0] if danger_mask is not None else 960
                     obstacles = get_middle_obstacles(contours_to_use, frame_width, frame_height, scale_x, scale_y)
+
+                    #FIXME AGAIN AGAIN FROM HERE
                     obs = check_route_segment_for_obstacles(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles)
                     if obs is not None:
-                        wp = find_bypass_waypoint(r_x_cm, r_y_cm, t_x_cm, t_y_cm, obs)
-                        if wp is not None:
-                            wp_x, wp_y = wp
-                            # Only insert if the waypoint is not already extremely close to the robot
-                            # Use a safety threshold slightly larger than waypoint_arrival_distance_cm (e.g. 12.0 cm)
+                        wps = plan_obstacle_safe_waypoints(
+                            r_x_cm, r_y_cm, t_x_cm, t_y_cm, obstacles
+                        )
+
+                        if wps:
+                            wp_x, wp_y = wps[0]
                             waypoint_arrival_dist = getattr(settings, 'waypoint_arrival_distance_cm', 8.0)
-                            if math.hypot(wp_x - r_x_cm, wp_y - r_y_cm) > (waypoint_arrival_dist + 4.0):
-                                wp_px_x = int(round(PERSPECTIVE_PADDING_PX + wp_x * scale_x))
-                                wp_px_y = int(round(PERSPECTIVE_PADDING_PX + wp_y * scale_y))
-                                wp_ball = BallDetection(
-                                    x=wp_px_x,
-                                    y=wp_px_y,
-                                    radius=12.0,
-                                    color_name="waypoint",
-                                    confidence=1.0,
-                                    circularity=1.0
-                                )
-                                self.queue.insert(0, wp_ball)
-                                print(
-                                    f"[RouteManager] Dynamic insertion of bypass waypoint at ({wp_px_x}, {wp_px_y}) "
-                                    f"cm=({wp_x:.1f},{wp_y:.1f})"
-                                )
-                                target = wp_ball
-                                t_x_cm, t_y_cm = wp_x, wp_y
-                                dist_to_target = math.hypot(t_x_cm - r_x_cm, t_y_cm - r_y_cm)
+
+                            #if math.hypot(wp_x - r_x_cm, wp_y - r_y_cm) > waypoint_arrival_dist + 4.0:
+                            #    wp_ball = self._make_waypoint_ball(wp_x, wp_y, scale_x, scale_y)
+                            #    self.queue.insert(0, wp_ball)
+                            #
+                            #    print(f"[RouteManager] Dynamic waypoint inserted cm=({wp_x:.1f},{wp_y:.1f})")
+                            #
+                            #    target = wp_ball
+                            #    t_x_cm, t_y_cm = wp_x, wp_y
+                            #    dist_to_target = math.hypot(t_x_cm - r_x_cm, t_y_cm - r_y_cm)
+                    #FIXME AGAIN AGAIN TO HERE
                 
                 if target.color_name != "waypoint" and dist_to_target < 30.0:
                     # Is target currently matched by any detection?

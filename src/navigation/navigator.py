@@ -28,27 +28,30 @@ def decide_immediate_command(
     settings: Settings,
     state: NavigationState,
     arrival_distance_cm=None,
-    turn_deadband_deg=None
+    turn_deadband_deg=None,
+    ignore_danger=False,
 ) -> NavigationResult:
     danger = context.danger
     danger_state = context.danger_state
     target_ball = context.target_ball
 
-    # Use specific tolerances for handoff, otherwise use defaults
-    arrival_dist = arrival_distance_cm if arrival_distance_cm is not None else settings.pose_arrival_distance_cm
-    turn_deadband = turn_deadband_deg if turn_deadband_deg is not None else settings.pose_turn_deadband_deg
+    print(
+        "[nav danger]",
+        f"front={danger.front}",
+        f"back={danger.back}",
+        f"left={danger.left}",
+        f"right={danger.right}",
+        f"center={danger.center}",
+        f"too_close={danger_state.too_close if danger_state else None}",
+    )
 
-    target_heading_error_deg = None
-    if context.robot_pose is not None and target_ball is not None:
-        robot_x, robot_y, robot_heading, *_ = corrected_robot_pose_values(
-            context.robot_pose,
-            frame_width=context.frame_width,
-            frame_height=context.frame_height,
-        )
-        dx_to_target = float(target_ball.x - robot_x)
-        dy_to_target = float(target_ball.y - robot_y)
-        target_heading = math.atan2(dy_to_target, dx_to_target)
-        target_heading_error_deg = math.degrees(normalize_angle_rad(target_heading - robot_heading))
+    def alt(cmd_a, cmd_b, reason):
+        if state.last_command == cmd_a:
+            return NavigationResult(cmd_b, reason + ":b")
+        if state.last_command == cmd_b:
+            return NavigationResult(cmd_a, reason + ":a")
+
+        return NavigationResult(cmd_a, reason + ":a")
 
     def choose_deviation_turn(reason_prefix: str) -> NavigationResult:
         if danger.left and not danger.right:
@@ -68,34 +71,65 @@ def decide_immediate_command(
 
         return NavigationResult(CMD_LEFT, f"{reason_prefix}:default_left")
 
-    if danger_state is not None and danger_state.too_close:
-        if danger_state.nearest_dy_body < -float(settings.danger_rear_ignore_cm):
-            return NavigationResult(CMD_FORWARD, f"danger:avoid_back d={danger_state.nearest_distance_cm:.1f}")
+    if not ignore_danger:
+        if danger.back and danger.left:
+            return alt(CMD_RIGHT, CMD_FORWARD, "danger:back_left")
+        if danger.back and danger.right:
+            return alt(CMD_LEFT, CMD_FORWARD, "danger:back_right")
+        if danger.front and danger.left:
+            return alt(CMD_RIGHT, CMD_BACKWARD, "danger:front_left")
+        if danger.front and danger.right:
+            return alt(CMD_LEFT, CMD_BACKWARD, "danger:front_right")
+
+
+        if danger_state is not None and danger_state.too_close:
+            if danger_state.nearest_dy_body < -float(settings.danger_rear_ignore_cm):
+                return NavigationResult(CMD_FORWARD, f"danger:avoid_back d={danger_state.nearest_distance_cm:.1f}")
+
+            if danger.front and danger.center:
+                return NavigationResult(CMD_BACKWARD, f"danger:too_close_front d={danger_state.nearest_distance_cm:.1f}")
+
+            if danger.left and danger.right:
+                return NavigationResult(CMD_BACKWARD, f"danger:too_close_sides d={danger_state.nearest_distance_cm:.1f}")
+
+            if danger_state.nearest_dx_body < 0.0:
+                return NavigationResult(CMD_RIGHT, f"danger:too_close_left d={danger_state.nearest_distance_cm:.1f}")
+
+            return NavigationResult(CMD_LEFT, f"danger:too_close_right d={danger_state.nearest_distance_cm:.1f}")
 
         if danger.front and danger.center:
-            return NavigationResult(CMD_BACKWARD, f"danger:too_close_front d={danger_state.nearest_distance_cm:.1f}")
+            if danger.left and danger.right:
+                return NavigationResult(CMD_BACKWARD, "danger:front_blocked")
+            return choose_deviation_turn("danger:front_deviate")
 
+        if danger.back and not danger.front and not danger.left and not danger.right:
+            return NavigationResult(CMD_FORWARD, "danger:back")
+        if danger.left and not danger.right:
+            return NavigationResult(CMD_RIGHT, "danger:left")
+        if danger.right and not danger.left:
+            return NavigationResult(CMD_LEFT, "danger:right")
         if danger.left and danger.right:
-            return NavigationResult(CMD_BACKWARD, f"danger:too_close_sides d={danger_state.nearest_distance_cm:.1f}")
+            return NavigationResult(CMD_BACKWARD, "danger:both_sides")
 
-        if danger_state.nearest_dx_body < 0.0:
-            return NavigationResult(CMD_RIGHT, f"danger:too_close_left d={danger_state.nearest_distance_cm:.1f}")
+    # Use specific tolerances for handoff, otherwise use defaults
+    arrival_dist = arrival_distance_cm if arrival_distance_cm is not None else settings.pose_arrival_distance_cm
+    turn_deadband = turn_deadband_deg if turn_deadband_deg is not None else settings.pose_turn_deadband_deg
 
-        return NavigationResult(CMD_LEFT, f"danger:too_close_right d={danger_state.nearest_distance_cm:.1f}")
+    target_heading_error_deg = None
+    if context.robot_pose is not None and target_ball is not None:
+        robot_x, robot_y, robot_heading, *_ = corrected_robot_pose_values(
+            context.robot_pose,
+            frame_width=context.frame_width,
+            frame_height=context.frame_height,
+        )
+        dx_to_target = float(target_ball.x - robot_x)
+        dy_to_target = float(target_ball.y - robot_y)
+        target_heading = math.atan2(dy_to_target, dx_to_target)
+        target_heading_error_deg = math.degrees(normalize_angle_rad(target_heading - robot_heading))
 
-    if danger.front and danger.center:
-        if danger.left and danger.right:
-            return NavigationResult(CMD_BACKWARD, "danger:front_blocked")
-        return choose_deviation_turn("danger:front_deviate")
 
-    if danger.back and not danger.front and not danger.left and not danger.right:
-        return NavigationResult(CMD_FORWARD, "danger:back")
-    if danger.left and not danger.right:
-        return NavigationResult(CMD_RIGHT, "danger:left")
-    if danger.right and not danger.left:
-        return NavigationResult(CMD_LEFT, "danger:right")
-    if danger.left and danger.right:
-        return NavigationResult(CMD_BACKWARD, "danger:both_sides")
+
+
 
     if target_ball is None:
         return NavigationResult(CMD_STOP, "no_ball")
@@ -200,7 +234,7 @@ def decide_command(
                 return NavigationResult(CMD_STOP, "handoff:aligned"), state
             return res, state
 
-        # --- Phase: approaching_delivery ---
+        # --- Phase: approaching_delivery --- TODO Stop checking danger after reaching this phase
         if state.handoff_phase == "approaching_delivery":
             if state.hold_command_until > context.now:
                 return NavigationResult(CMD_STOP, "handoff:pausing"), state
@@ -235,11 +269,11 @@ def decide_command(
                 confidence=1.0
             )
             nav_context = replace(context, target_ball=goal_target)
-            res = decide_immediate_command(nav_context, settings, state, turn_deadband_deg=3)
+            res = decide_immediate_command(nav_context, settings, state, turn_deadband_deg=3, ignore_danger=True)
 
             if res.command not in [CMD_LEFT, CMD_RIGHT]:
                 state.handoff_phase = "starting_unload"
-                state.hold_command_until = context.now + 10.0 # Unload time
+                state.hold_command_until = context.now + 5.0 # Unload time
                 print("Handoff: Final alignment complete. Phase -> starting_unload")
                 return NavigationResult(CMD_STOP, "handoff:ready_unload"), state
             return res, state

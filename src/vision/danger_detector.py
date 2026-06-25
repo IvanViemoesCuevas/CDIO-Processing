@@ -130,7 +130,7 @@ def detect_danger_zones(
 
             flags.front = bool(np.any(forward_near >= -front_band))
             flags.back = bool(np.any(forward_near <= rear_band))
-            flags.center = bool(np.any(np.abs(right_near) <= side_deadband))
+            #flags.center = bool(np.any(np.abs(right_near) <= side_deadband))
             flags.left = bool(np.any(right_near < -side_deadband))
             flags.right = bool(np.any(right_near > side_deadband))
 
@@ -145,7 +145,7 @@ def detect_danger_zones(
         flags.front = bool(np.any(ys < zone_h))
         flags.back = bool(np.any(ys >= zone_h * 2))
         flags.left = bool(np.any(xs < zone_w))
-        flags.center = bool(np.any((xs >= zone_w) & (xs < zone_w * 2)))
+        #flags.center = bool(np.any((xs >= zone_w) & (xs < zone_w * 2)))
         flags.right = bool(np.any(xs >= zone_w * 2))
 
     return flags, state, filtered_mask, kept_contours

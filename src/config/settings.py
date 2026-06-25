@@ -18,12 +18,12 @@ class Settings:
     white_sat_split: float = 80.0
 
     # Aligning and arrival of the robot
-    align_deadband_cm: float = 8.0
+    align_deadband_cm: float = 25.0
     target_radius_cm: float = 2.0
     commit_forward_window_sec: float = 1.0  # TODO tweak
     pose_turn_deadband_deg: float = 5.0
-    pose_arrival_distance_cm: float = 20.0
-    waypoint_arrival_distance_cm: float = 8.0
+    pose_arrival_distance_cm: float = 21.0
+    waypoint_arrival_distance_cm: float = 15.0
     obstacle_avoidance_margin_cm: float = 15.0
     target_missing_frames_limit: int = 30
 
@@ -38,7 +38,7 @@ class Settings:
     robot_length_cm: float = 45.0
     robot_width_cm: float = 20.0
     robot_danger_margin_cm: float = 0.0
-    robot_front_extra_margin_cm: float = 0.5
+    robot_front_extra_margin_cm: float = 1.0
     robot_side_extra_margin_cm: float = 0.0
 
     # Goal detection settings

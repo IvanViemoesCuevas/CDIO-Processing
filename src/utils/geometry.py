@@ -97,6 +97,18 @@ def ccw(A, B, C):
 def segments_intersect(p1, p2, p3, p4):
     return ccw(p1, p3, p4) != ccw(p2, p3, p4) and ccw(p1, p2, p3) != ccw(p1, p2, p4)
 
+def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, frame_height: int, scale_x: float, scale_y: float) -> list[tuple[float, float, float, float]]:
+    obstacles = []
+    for c in danger_contours:
+        x_px, y_px, w_px, h_px = cv.boundingRect(c)
+        if w_px >= 0.8 * frame_width or h_px >= 0.8 * frame_height:
+            continue
+        x1 = (x_px - PERSPECTIVE_PADDING_PX) / scale_x
+        y1 = (y_px - PERSPECTIVE_PADDING_PX) / scale_y
+        x2 = (x_px + w_px - PERSPECTIVE_PADDING_PX) / scale_x
+        y2 = (y_px + h_px - PERSPECTIVE_PADDING_PX) / scale_y
+        obstacles.append((x1, y1, x2, y2))
+    return obstacles
 
 def segment_intersects_box(xa, ya, xb, yb, box):
     x1, y1, x2, y2 = box
@@ -118,18 +130,36 @@ def segment_intersects_box(xa, ya, xb, yb, box):
     return False
 
 
-def get_middle_obstacles(danger_contours: list[np.ndarray], frame_width: int, frame_height: int, scale_x: float, scale_y: float) -> list[tuple[float, float, float, float]]:
-    obstacles = []
-    for c in danger_contours:
-        x_px, y_px, w_px, h_px = cv.boundingRect(c)
-        if w_px >= 0.8 * frame_width or h_px >= 0.8 * frame_height:
-            continue
-        x1 = (x_px - PERSPECTIVE_PADDING_PX) / scale_x
-        y1 = (y_px - PERSPECTIVE_PADDING_PX) / scale_y
-        x2 = (x_px + w_px - PERSPECTIVE_PADDING_PX) / scale_x
-        y2 = (y_px + h_px - PERSPECTIVE_PADDING_PX) / scale_y
-        obstacles.append((x1, y1, x2, y2))
-    return obstacles
+def expand_box(box, margin: float):
+    x1, y1, x2, y2 = box
+    return (x1 - margin, y1 - margin, x2 + margin, y2 + margin)
+
+
+def point_in_box(x, y, box, margin: float = 0.0):
+    x1, y1, x2, y2 = expand_box(box, margin)
+    return x1 <= x <= x2 and y1 <= y <= y2
+
+
+def segment_intersects_box(xa, ya, xb, yb, box, margin: float | None = None):
+    if margin is None:
+        margin = Settings.obstacle_avoidance_margin_cm
+
+    x1, y1, x2, y2 = expand_box(box, margin)
+
+    if point_in_box(xa, ya, box, margin) or point_in_box(xb, yb, box, margin):
+        return True
+
+    p1 = (xa, ya)
+    p2 = (xb, yb)
+
+    edges = [
+        ((x1, y1), (x1, y2)),
+        ((x2, y1), (x2, y2)),
+        ((x1, y1), (x2, y1)),
+        ((x1, y2), (x2, y2)),
+    ]
+
+    return any(segments_intersect(p1, p2, a, b) for a, b in edges)
 
 
 def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles):
@@ -139,78 +169,171 @@ def check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles):
     return None
 
 
+def clamp_field(x, y, margin: float = 5.0):
+    return (
+        max(margin, min(x, FIELD_WIDTH_CM - margin)),
+        max(margin, min(y, FIELD_HEIGHT_CM - margin)),
+    )
+
+
+def waypoint_from_ball_opposite_cross(ball_x, ball_y, obstacle, distance_cm: float = 20.0):
+    x1, y1, x2, y2 = obstacle
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+
+    dx = ball_x - cx
+    dy = ball_y - cy
+    length = math.hypot(dx, dy)
+
+    if length < 1e-6:
+        dx, dy = 1.0, 0.0
+        length = 1.0
+
+    ux = dx / length
+    uy = dy / length
+
+    return clamp_field(
+        ball_x + ux * distance_cm,
+        ball_y + uy * distance_cm,
+    )
+
+
+def midpoint_perpendicular_waypoint(xa, ya, xb, yb, obstacle, clearance_cm: float = 30.0):
+    x1, y1, x2, y2 = obstacle
+    cx = (x1 + x2) / 2.0
+    cy = (y1 + y2) / 2.0
+
+    mx = (xa + xb) / 2.0
+    my = (ya + yb) / 2.0
+
+    vx = xb - xa
+    vy = yb - ya
+    length = math.hypot(vx, vy)
+
+    if length < 1e-6:
+        vx, vy = 1.0, 0.0
+        length = 1.0
+
+    # 90 degrees from route vector
+    px = -vy / length
+    py = vx / length
+
+    # Pick side pointing away from cross center
+    away_dot = (mx - cx) * px + (my - cy) * py
+    sign = 1.0 if away_dot >= 0 else -1.0
+
+    # Move along perpendicular until 30 cm outside the RAW cross box
+    raw_plus_clearance = expand_box(obstacle, clearance_cm)
+
+    for step in range(0, 200, 2):
+        wx = mx + sign * px * step
+        wy = my + sign * py * step
+        wx, wy = clamp_field(wx, wy)
+
+        if not point_in_box(wx, wy, raw_plus_clearance, 0.0):
+            return wx, wy
+
+    # deterministic fallback, still never None
+    return clamp_field(mx + sign * px * clearance_cm, my + sign * py * clearance_cm)
+
+
+def plan_obstacle_safe_waypoints(xa, ya, xb, yb, obstacles, max_depth: int = 8):
+    """
+    Returns waypoint cm coordinates needed before driving to xb,yb.
+    Never returns None.
+    """
+    obs = check_route_segment_for_obstacles(xa, ya, xb, yb, obstacles)
+    if obs is None:
+        return []
+
+    if max_depth <= 0:
+        wp = midpoint_perpendicular_waypoint(xa, ya, xb, yb, obs)
+        return [wp]
+
+    wp_x, wp_y = midpoint_perpendicular_waypoint(xa, ya, xb, yb, obs)
+
+    before = plan_obstacle_safe_waypoints(xa, ya, wp_x, wp_y, obstacles, max_depth - 1)
+    after = plan_obstacle_safe_waypoints(wp_x, wp_y, xb, yb, obstacles, max_depth - 1)
+
+    return before + [(wp_x, wp_y)] + after
+
+
+def obstacle_containing_point(x, y, obstacles):
+    margin = Settings.obstacle_avoidance_margin_cm
+    for obs in obstacles:
+        if point_in_box(x, y, obs, margin):
+            return obs
+    return None
+
+
 def find_bypass_waypoint(xa, ya, xb, yb, obstacle) -> Optional[tuple[float, float]]:
-    # Obstacle bounding box: (left, top, right, bottom)
     x1, y1, x2, y2 = obstacle
 
-    # Stop short of the target so the robot approaches the ball indirectly
-    ball_offset_cm = 25.0
+    margin = Settings.obstacle_avoidance_margin_cm
+    min_from_current = 30.0
+    min_from_target = 25.0
+    clearance = margin + 10.0
 
-    # Obstacle center point
-    obs_cx = (x1 + x2) / 2.0
-    obs_cy = (y1 + y2) / 2.0
+    # Use expanded obstacle box.
+    ex1 = x1 - margin
+    ey1 = y1 - margin
+    ex2 = x2 + margin
+    ey2 = y2 + margin
 
-    # Direction vector from current position to target
-    route_dx = xb - xa
-    route_dy = yb - ya
-    route_len = math.hypot(route_dx, route_dy)
+    candidates = [
+        ((ex1 + ex2) / 2.0, ey1 - clearance),  # above
+        ((ex1 + ex2) / 2.0, ey2 + clearance),  # below
+        (ex1 - clearance, (ey1 + ey2) / 2.0),  # left
+        (ex2 + clearance, (ey1 + ey2) / 2.0),  # right
 
-    # No meaningful route if start and target are the same
-    if route_len < 1e-6:
+        (ex1 - clearance, ey1 - clearance),    # top-left
+        (ex2 + clearance, ey1 - clearance),    # top-right
+        (ex1 - clearance, ey2 + clearance),    # bottom-left
+        (ex2 + clearance, ey2 + clearance),    # bottom-right
+    ]
+
+    valid = []
+
+    for wx, wy in candidates:
+        wx = max(margin, min(wx, FIELD_WIDTH_CM - margin))
+        wy = max(margin, min(wy, FIELD_HEIGHT_CM - margin))
+
+        dist_from_current = math.hypot(wx - xa, wy - ya)
+        dist_from_target = math.hypot(wx - xb, wy - yb)
+
+        if dist_from_current < min_from_current:
+            continue
+
+        if dist_from_target < min_from_target:
+            continue
+
+        # Waypoint itself must not be inside expanded obstacle box.
+        if ex1 <= wx <= ex2 and ey1 <= wy <= ey2:
+            continue
+
+        first_leg_blocked = segment_intersects_box(xa, ya, wx, wy, obstacle)
+        second_leg_blocked = segment_intersects_box(wx, wy, xb, yb, obstacle)
+
+        # Best case: both legs are clear.
+        # Acceptable case: first leg clear, second leg may need another waypoint later.
+        if first_leg_blocked:
+            continue
+
+        penalty = 0
+        if second_leg_blocked:
+            penalty += 10000
+
+        total_dist = dist_from_current + dist_from_target
+        valid.append((penalty + total_dist, wx, wy))
+
+    if not valid:
+        print(
+            "[geometry] No valid bypass waypoint found "
+            f"from=({xa:.1f},{ya:.1f}) "
+            f"to=({xb:.1f},{yb:.1f}) "
+            f"obs=({x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f})"
+        )
         return None
 
-    # Normalize route direction
-    route_dx /= route_len
-    route_dy /= route_len
-
-    # Create a base point slightly before the target
-    # (prevents driving directly onto the ball/target)
-    base_x = xb - route_dx * ball_offset_cm
-    base_y = yb - route_dy * ball_offset_cm
-
-    # Determine which side of the route the obstacle lies on
-    side = (base_x - obs_cx) * route_dy - (base_y - obs_cy) * route_dx
-
-    # Two perpendicular directions to the route
-    perp1_x = -route_dy
-    perp1_y = route_dx
-
-    perp2_x = route_dy
-    perp2_y = -route_dx
-
-    # Choose the perpendicular direction that moves away from the obstacle
-    if side >= 0:
-        perp_x, perp_y = perp2_x, perp2_y
-    else:
-        perp_x, perp_y = perp1_x, perp1_y
-
-    # Start waypoint search from the base point
-    wp_x = base_x
-    wp_y = base_y
-
-    def distance_from_box(px, py):
-        """Shortest distance from a point to the obstacle rectangle."""
-        closest_x = max(x1, min(px, x2))
-        closest_y = max(y1, min(py, y2))
-        return math.hypot(px - closest_x, py - closest_y)
-
-    # Move the waypoint sideways until the required clearance is reached
-    for _ in range(1000):
-        if distance_from_box(wp_x, wp_y) >= Settings.obstacle_avoidance_margin_cm:
-            break
-        wp_x += perp_x
-        wp_y += perp_y
-
-    # Keep waypoint safely inside field boundaries
-    wall_margin = Settings.obstacle_avoidance_margin_cm
-    wp_x = max(wall_margin, min(wp_x, FIELD_WIDTH_CM - wall_margin))
-    wp_y = max(wall_margin, min(wp_y, FIELD_HEIGHT_CM - wall_margin))
-
-    # If the waypoint is still blocked by the obstacle, move it back towards the start
-    for _ in range(1000):
-        if not segment_intersects_box(xa, ya, wp_x, wp_y, obstacle):
-            break
-        wp_x = xa + 0.85 * (wp_x - xa)
-        wp_y = ya + 0.85 * (wp_y - ya)
-
-    return wp_x, wp_y
+    valid.sort(key=lambda item: item[0])
+    return valid[0][1], valid[0][2]
