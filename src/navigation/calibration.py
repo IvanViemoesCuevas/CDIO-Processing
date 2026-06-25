@@ -16,7 +16,7 @@ MARKER_TO_DRIVE_CENTER_RIGHT_PX = 0.0
 # Tune these so the elevated marker projects down to the ground point under the marker.
 # Positive X gain moves the correction more right when the marker is right of image center.
 # Positive Y gain moves the correction more down when the marker is below image center.
-MARKER_PERSPECTIVE_X_GAIN = -90.0
+MARKER_PERSPECTIVE_X_GAIN = -95.0
 MARKER_PERSPECTIVE_Y_GAIN = -60.0
 
 # Backwards-compatible aliases used by ui.py debug text.
